@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="refresh" content="15" />
+<title>Live Competition - Real Data</title>
+<style>
+  :root { --bg:#0b0e14; --card:#141924; --line:#232a38; --fg:#e6edf3; --mut:#8b97a7;
+          --grn:#3fb950; --red:#f85149; --acc:#58a6ff; --gold:#e3b341; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  a { color:var(--acc); text-decoration:none; }
+  .wrap { max-width:1080px; margin:0 auto; padding:24px 20px 60px; }
+  h1 { margin:0 0 4px; font-size:23px; }
+  h1 .live { font-size:12px; color:var(--grn); vertical-align:middle; margin-left:8px;
+             border:1px solid #1c3a26; background:#12261a; border-radius:20px; padding:2px 9px; }
+  .sub { color:var(--mut); margin-bottom:14px; } .sub .nav { float:right; }
+  .bar { height:6px; background:#0d1119; border:1px solid var(--line); border-radius:6px; overflow:hidden; margin:6px 0 18px; }
+  .bar > div { height:100%; background:linear-gradient(90deg,#1c6b34,#3fb950); }
+  .meta { display:flex; gap:20px; flex-wrap:wrap; font-size:12.5px; color:var(--mut); margin-bottom:16px; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:12px; text-transform:uppercase; letter-spacing:.4px;
+       color:var(--mut); padding:10px 12px; border-bottom:1px solid var(--line); }
+  td { padding:13px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:hover td { background:#10151f; }
+  .rank { font-size:20px; font-weight:700; width:40px; }
+  .r1 { color:var(--gold); } .r2 { color:#c9d1d9; } .r3 { color:#cd7f32; }
+  .name { font-weight:600; } .prompt { color:var(--mut); font-size:12px; margin-top:3px; max-width:340px; }
+  .pos { display:flex; gap:4px; margin-top:7px; flex-wrap:wrap; }
+  .chip { font-size:11px; background:#1b2233; border:1px solid var(--line); border-radius:5px; padding:2px 6px; color:#aeb9c9; }
+  .chip .up { color:var(--grn); } .chip .down { color:var(--red); }
+  .num { text-align:right; white-space:nowrap; }
+  .ret { font-size:18px; font-weight:700; } .up { color:var(--grn); } .down { color:var(--red); }
+  .kind { font-size:10.5px; padding:1px 6px; border-radius:5px; border:1px solid var(--line); margin-left:6px; }
+  .k-rwa { background:#1f1a2e; color:#c9a9ff; border-color:#2e2444; }
+  .k-crypto { background:#101f2a; color:#79c0ff; border-color:#173040; }
+  .cov { font-size:10.5px; padding:1px 6px; border-radius:5px; margin-left:6px;
+         background:#2a2411; color:#e3b341; border:1px solid #3a3218; }
+  .chip.dead { opacity:.4; text-decoration:line-through; }
+  tr.skip td { opacity:.5; }
+  .naexec { color:var(--mut); font-style:italic; }
+  .foot { color:var(--mut); font-size:12px; margin-top:22px; }
+  .none { color:var(--mut); padding:30px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Live Competition <span class="live" id="livetag">LIVE</span></h1>
+  <div class="sub">Real prices, real rebalancer. Each index started with equal capital; ranked by realized return.
+    <span class="nav"><a href="build.html">Build an index</a> &middot; <a href="index.html">Attested leaderboard</a></span></div>
+  <div class="bar"><div id="prog" style="width:0%"></div></div>
+  <div class="meta" id="meta"></div>
+  <table>
+    <thead><tr><th>#</th><th>Index</th><th>Holdings (live change)</th>
+      <th class="num">NAV</th><th class="num">Return</th><th class="num">Rebal</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="foot" id="foot"></div>
+  <div class="none" id="none" style="display:none">
+    No live data yet. Run <code>node compete.mjs</code> in <code>demo/</code>, then this page updates every 15s.
+  </div>
+</div>
+<script src="live.js"></script>
+<script>
+  const d = window.LIVE, pct = x => (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%";
+  const usd = x => "$" + x.toLocaleString(undefined, {maximumFractionDigits: 0});
+  if (!d) { document.getElementById("none").style.display = "block"; }
+  else {
+    const tag = document.getElementById("livetag");
+    if (d.finished) { tag.textContent = "FINAL"; tag.style.color = "#e3b341"; }
+    document.getElementById("prog").style.width =
+      Math.min(100, 100 * d.elapsedSec / d.durationSec) + "%";
+    const nExec = d.indices.filter(b => !b.notExecutable).length;
+    document.getElementById("meta").innerHTML = [
+      `Elapsed: <b style="color:#e6edf3">${Math.floor(d.elapsedSec/60)}m ${d.elapsedSec%60}s</b> / ${Math.round(d.durationSec/60)}m`,
+      `Capital each: <b style="color:#e6edf3">${usd(d.capital)}</b>`,
+      `Rebalance: every ${Math.round(d.rebalanceSec/60)}m`,
+      `Executable: <b style="color:#e6edf3">${nExec}/${d.indices.length}</b>`,
+      `Source: ${d.sourceLabel || d.source}`,
+    ].join("");
+    document.getElementById("rows").innerHTML = d.indices.map(b => {
+      const rc = !b.notExecutable && b.rank <= 3 ? "r" + b.rank : "";
+      const kind = `<span class="kind k-${b.kind}">${b.kind === "rwa" ? "RWA" : "crypto"}</span>`;
+      const cov = b.coverage < 1 && !b.notExecutable ? `<span class="cov">${Math.round(b.coverage*100)}% on venue</span>` : "";
+      const pos = b.legs.map(l => l.dead
+        ? `<span class="chip dead" title="not listed on this venue">${l.sym} ${l.weight}%</span>`
+        : `<span class="chip">${l.sym} ${l.weight}% <span class="${l.chg>=0?"up":"down"}">${pct(l.chg)}</span></span>`).join("");
+      if (b.notExecutable) return `<tr class="skip">
+        <td class="rank">-</td>
+        <td><div class="name">${b.name}${kind}</div><div class="prompt">"${b.prompt}"</div></td>
+        <td><div class="pos">${pos}</div></td>
+        <td class="num naexec" colspan="3">not listed on ${d.source} - excluded</td>
+      </tr>`;
+      return `<tr>
+        <td class="rank ${rc}">${b.rank}</td>
+        <td><div class="name">${b.name}${kind}${cov}</div><div class="prompt">"${b.prompt}"</div></td>
+        <td><div class="pos">${pos}</div></td>
+        <td class="num">${usd(b.nav)}</td>
+        <td class="num ret ${b.ret>=0?"up":"down"}">${pct(b.ret)}</td>
+        <td class="num">${b.rebalances}</td>
+      </tr>`;
+    }).join("");
+    const winner = d.indices.find(b => !b.notExecutable);
+    document.getElementById("foot").innerHTML = d.finished
+      ? `Final result over ${Math.round(d.durationSec/60)} minutes of real ${d.source} oracle data. Winner: ` +
+        `<b style="color:#e6edf3">${winner ? winner.name : "-"}</b>${winner ? " at " + pct(winner.ret) : ""}.`
+      : `Live from the ${d.source} oracle; the rebalancer resets each index to its target weights every ` +
+        `${Math.round(d.rebalanceSec/60)} minutes. Legs not listed on the venue are dropped and weights ` +
+        `renormalized. Page auto-refreshes every 15s.`;
+  }
+</script>
+</body>
+</html>

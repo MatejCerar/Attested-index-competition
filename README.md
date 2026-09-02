@@ -48,7 +48,10 @@ an agent wallet.
 ## Build your own index (RWA universe)
 
 `rwa-database.txt` is the raw universe: ~8,900 tokenized-asset listings across
-issuers, venues and chains. `demo/build-catalog.mjs` collapses it to the set of
+issuers, venues and chains. It is large and kept out of git (see `.gitignore`);
+the committed, derived catalog (`demo/catalog.json` and
+`demo/frontend/catalog.js`) is what the app reads, so you only need the raw txt
+to regenerate it. `demo/build-catalog.mjs` collapses it to the set of
 selectable instruments using one identity rule: **an asset is unique by
 (Ticker, Issuer)**. The same ticker from a different issuer (say `TSLAx` from
 Backed vs `TSLAon` from Ondo vs `TSLA` from Robinhood) is a different,
@@ -84,6 +87,61 @@ cd demo && node orchestrate.mjs                 # preview: 7 RWA indices
 INCLUDE_CRYPTO=1 node orchestrate.mjs           # also add the 5 crypto baskets
 ```
 
+## Real competition (live data)
+
+The attested leaderboard scores a rebalance on a simulated P&L path. To run a
+*real* competition instead, `demo/compete.mjs` prices every index on live
+market data, runs the rebalancer, and tracks realized return over a window.
+Each index starts with equal capital; ranking at the end is the real return.
+
+The rebalancer, every `REBALANCE_SEC`, resets each index's holdings to its
+target weights at current prices (a constant-mix strategy) - the exact action
+the FCC enclave signs on-chain in `orchestrate.mjs`, here run against live data
+so you can watch it.
+
+**Price source (`PRICE_SOURCE`)**
+
+- `hl` (default) - **Hyperliquid mainnet oracle**, the target venue. It prices
+  the exact HIP-3 stock/commodity/metal perps (and crypto) an index would trade
+  against - read-only and free, so no capital and no tokens are needed. This is
+  the real competition minus capital-at-risk execution: going live is swapping
+  this read-only adapter for an order-placing one (an HL agent wallet the
+  enclave holds - trade-only, cannot withdraw) using the same signed weights.
+  Not every asset is listed on HL: legs that are not are dropped and the index's
+  remaining weights renormalized, with coverage shown; an index with nothing on
+  HL (e.g. the ETF or financials baskets today) is marked not executable and
+  excluded from the ranking. Honest about what the venue can actually trade.
+- `yahoo` - venue-agnostic: **Yahoo Finance** for the RWA legs (token mapped to
+  its underlying symbol, metals to futures `GC=F/SI=F/PL=F/PA=F`) and
+  **CoinGecko** for crypto. Full coverage of the seed indices; useful off the
+  target venue.
+
+Only relative moves matter, so a live baseline is taken at t0 and NAV tracked
+each tick.
+
+```
+cd demo
+node compete.mjs                                  # HL oracle, 1h, rebalance 15m, $100k each
+PRICE_SOURCE=yahoo node compete.mjs               # Yahoo/CoinGecko instead
+DURATION_SEC=3600 INTERVAL_SEC=30 REBALANCE_SEC=600 node compete.mjs
+INCLUDE_CRYPTO=1 node compete.mjs                 # add the 5 crypto baskets to the field
+```
+
+It writes `frontend/live.js` every tick; open `frontend/live.html` to watch
+(auto-refreshes every 15s), where per-index venue coverage and non-executable
+indices are shown. Note on hours: cash equities only move while US markets are
+open, but metals and crypto move ~24h and keep the board alive off-hours.
+
+### Why Hyperliquid, not a testnet
+
+The tokenized stocks live on **Hyperliquid mainnet** (HIP-3 perp dexes such as
+`xyz`: AAPL, NVDA, TSLA, GOLD, ...). Coston2 has no equities, and HL *testnet*
+has only crypto perps plus unverified squatter spot tokens - so a testnet does
+not make the stock competition more real, it makes it fake. Reading the HL
+mainnet oracle (free) is the faithful, zero-capital way to run it; real
+execution is the same code with an order-placing adapter, provable cheaply on
+HL testnet for a crypto-only index.
+
 ## The frontend (where to see it)
 
 The frontend is two static pages under `demo/frontend/` - `data.js` and
@@ -94,10 +152,12 @@ folder, e.g. `cd demo/frontend && npx serve` or `python3 -m http.server`.)
 - `demo/frontend/build.html` - the **index builder**. Search and filter the
   ~2,300-asset RWA universe, add assets, set each weight, name the index and
   write its thesis, then export `user-baskets.json` for the competition.
-- `demo/frontend/index.html` - the **leaderboard**. Ranks every index by its
-  (simulated) 7-day return, and shows each index's holdings, per-leg price
-  source (FTSO/CSV badges), the fee, and - when run with a `PK` - links to the
-  on-chain vault and rebalance tx on the Coston2 explorer.
+- `demo/frontend/index.html` - the attested **leaderboard**. Ranks every index
+  by its (simulated) 7-day return, and shows each index's holdings, per-leg
+  price source (FTSO/CSV badges), the fee, and - when run with a `PK` - links to
+  the on-chain vault and rebalance tx on the Coston2 explorer.
+- `demo/frontend/live.html` - the **live competition** board (real market data,
+  see above). Auto-refreshes every 15s while `compete.mjs` runs.
 
 ## Quickstart
 
@@ -140,13 +200,18 @@ come from the builder into `demo/user-baskets.json`.
 ```
 src/SyntheticIndexVault.sol   the FCC-gated on-chain rebalancer
 test/                         Foundry tests (3, passing)
-rwa-database.txt              raw tokenized-asset universe (tab-separated)
+rwa-database.txt              raw universe (tab-separated, gitignored - local only)
+demo/catalog.json             derived universe read by orchestrate (committed)
+demo/frontend/catalog.js      derived universe read by the builder (committed)
 demo/build-catalog.mjs        rwa-database.txt -> catalog (dedup by ticker+issuer)
 demo/baskets.mjs              5 crypto index prompts + weights (opt-in: INCLUDE_CRYPTO)
 demo/user-baskets.json        the 7 AI-recipe RWA indices (editable in the builder)
 demo/orchestrate.mjs          deposits + FCC-signed on-chain rebalance (crypto + RWA)
+demo/prices.mjs               live price sources (Hyperliquid oracle / Yahoo / CoinGecko)
+demo/compete.mjs              real competition: live prices, rebalancer loop, ranking
 demo/frontend/build.html      the index builder (pick assets, set weights)
-demo/frontend/index.html      leaderboard
+demo/frontend/index.html      attested leaderboard (simulated 7d P&L)
+demo/frontend/live.html       live competition board (real data, auto-refresh)
 ```
 
 ## Roadmap: Hyperliquid

@@ -1,0 +1,92 @@
+[
+  {
+    "id": "mag-7-tokenized",
+    "name": "Mag-7 Tokenized",
+    "prompt": "Hold the seven mega-cap US tech names as tokenized equities, weighted by market cap and tilted to the largest.",
+    "kind": "rwa",
+    "weights": {
+      "NVDAx::backed-assets-je-limited": 20,
+      "AAPLx::backed-assets-je-limited": 18,
+      "MSFTx::backed-assets-je-limited": 18,
+      "AMZNx::backed-assets-je-limited": 14,
+      "GOOGLx::backed-assets-je-limited": 12,
+      "METAx::backed-assets-je-limited": 10,
+      "TSLAx::backed-assets-je-limited": 8
+    }
+  },
+  {
+    "id": "ai-semiconductors",
+    "name": "AI & Semiconductors",
+    "prompt": "Build a basket of the picks-and-shovels of the AI buildout: GPU, foundry and memory names, overweight the compute leader.",
+    "kind": "rwa",
+    "weights": {
+      "NVDAx::backed-assets-je-limited": 30,
+      "AVGOx::backed-assets-je-limited": 18,
+      "TSMx::backed-assets-je-limited": 16,
+      "ASMLx::backed-assets-je-limited": 14,
+      "AMDx::backed-assets-je-limited": 14,
+      "MUx::backed-assets-je-limited": 8
+    }
+  },
+  {
+    "id": "wall-street-financials",
+    "name": "Wall Street Financials",
+    "prompt": "Concentrate on money-center banking and card-network rails: a bank, the two card networks, and an investment bank.",
+    "kind": "rwa",
+    "weights": {
+      "JPMx::backed-assets-je-limited": 35,
+      "Vx::backed-assets-je-limited": 25,
+      "MAx::backed-assets-je-limited": 25,
+      "GSx::backed-assets-je-limited": 15
+    }
+  },
+  {
+    "id": "crypto-equity-complex",
+    "name": "Crypto-Equity Complex",
+    "prompt": "Get equity-market exposure to the crypto economy: an exchange, a bitcoin treasury, a stablecoin issuer and a retail broker.",
+    "kind": "rwa",
+    "weights": {
+      "COINx::backed-assets-je-limited": 35,
+      "MSTRx::backed-assets-je-limited": 30,
+      "HOODx::backed-assets-je-limited": 20,
+      "CRCLx::backed-assets-je-limited": 15
+    }
+  },
+  {
+    "id": "tokenized-index-funds",
+    "name": "Tokenized Index Funds",
+    "prompt": "A one-line broad-market allocation using tokenized ETFs: large-cap core, Nasdaq growth tilt, small-cap kicker.",
+    "kind": "rwa",
+    "weights": {
+      "SPYx::backed-assets-je-limited": 50,
+      "QQQx::backed-assets-je-limited": 35,
+      "IWMx::backed-assets-je-limited": 15
+    }
+  },
+  {
+    "id": "consumer-brands",
+    "name": "Consumer Brands",
+    "prompt": "Defensive consumer staples and brands with pricing power: warehouse retail, big-box, fast food, beverages, coffee and apparel.",
+    "kind": "rwa",
+    "weights": {
+      "COSTon::ondo-global-markets-bvi-limited": 22,
+      "WMTx::backed-assets-je-limited": 20,
+      "MCDx::backed-assets-je-limited": 18,
+      "KOx::backed-assets-je-limited": 16,
+      "SBUXon::ondo-global-markets-bvi-limited": 14,
+      "NKEon::ondo-global-markets-bvi-limited": 10
+    }
+  },
+  {
+    "id": "precious-metals",
+    "name": "Precious Metals Basket",
+    "prompt": "Tokenized precious metals as an inflation hedge, priced live on FTSO where available: gold-heavy, with silver, platinum and palladium.",
+    "kind": "rwa",
+    "weights": {
+      "XAUT0::usdt0-network-xaut0-deployments": 50,
+      "SLV::robinhood-markets-inc": 25,
+      "PPLTon::ondo-global-markets-bvi-limited": 15,
+      "PALLx::backed-assets-je-limited": 10
+    }
+  }
+]

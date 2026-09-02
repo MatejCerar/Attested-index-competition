@@ -1,218 +1,462 @@
 window.DEMO = {
-  "generatedAt": "2026-09-02T09:27:40.411Z",
+  "generatedAt": "2026-09-02T11:40:25.530Z",
   "network": "Coston2 (chain 114)",
   "ftso": "0xC4e9c78EA53db782E28f28Fdf80BaF59336B304d",
-  "platform": "0x4AD9F5F107c54264A5d107dEb10f768a9d27b8b7",
-  "rebalancer": "0x5Cd9677f9D300a3af64783629B3B281b7217bC54",
-  "attestedBy": "real Flare tee-node v0.0.24 (FCC) - signs each on-chain rebalance",
+  "registry": "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019",
+  "platform": null,
+  "rebalancer": null,
+  "attestedBy": "preview (no on-chain rebalance) - set PK + run the tee-node to attest",
+  "preview": true,
   "feeBps": 200,
-  "platformRevenueFlr": 5,
-  "flrUsd": 0.00657099,
+  "platformRevenueFlr": 7,
+  "flrUsd": 0.00657996,
   "baseline": {
-    "FLR": 0.00657099,
-    "BTC": 76769.05,
-    "ETH": 2384.558,
-    "XRP": 1.330262,
-    "SOL": 99.0116,
-    "AVAX": 7.14331,
-    "DOGE": 0.081039
+    "FLR": 0.00657996,
+    "BTC": 76646.9,
+    "ETH": 2378.788,
+    "XRP": 1.322115,
+    "SOL": 98.0836,
+    "AVAX": 7.11582,
+    "DOGE": 0.081098
   },
   "baskets": [
     {
-      "id": "l1-index",
-      "name": "Smart-Contract L1 Index",
-      "prompt": "Build a basket of leading smart-contract layer-1s, tilted to liquidity.",
-      "rationale": "ETH as the base layer, SOL for throughput/retail flow, AVAX for subnet optionality.",
-      "weights": {
-        "ETH": 45,
-        "SOL": 35,
-        "AVAX": 20
-      },
-      "vault": "0xd5Cb1ccf4aB347428871421F3bC8C34153a94079",
-      "depositor": "0x5937c4D448A6746C326952A656eC437CfE79115C",
+      "id": "wall-street-financials",
+      "name": "Wall Street Financials",
+      "prompt": "Concentrate on money-center banking and card-network rails: a bank, the two card networks, and an investment bank.",
+      "kind": "rwa",
+      "vault": null,
       "aumFlr": 50,
-      "aumUsd": 0.3285495,
+      "aumUsd": 0.328998,
       "feeFlr": 1,
-      "feeTx": "0x1024869584db520aa14b8b09ce49b0b731f683e0944eb924c5d366e689aec58c",
-      "depositTx": "0x4d5f49b762b37707ecdd16634300bb793eec68631730c195939596b493b95acd",
-      "rebalanceTx": "0x2b989caef8d612119db5c6e2e661641b91c2f281688c40ab731bfd60ff92c82d",
       "positions": [
         {
-          "sym": "ETH",
-          "weight": 45,
-          "units": 0.000062001962208509,
-          "basePx": 2384.558,
-          "drift": 0.003381000000000023
-        },
-        {
-          "sym": "SOL",
+          "sym": "JPMx",
           "weight": 35,
-          "units": 0.001161402552832193,
-          "basePx": 99.0116,
-          "drift": 0.12778000000000003
+          "units": 0.0003228907520610173,
+          "basePx": 356.62,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.22543299999999997
         },
         {
-          "sym": "AVAX",
-          "weight": 20,
-          "units": 0.00919880279590274,
-          "basePx": 7.14331,
-          "drift": 0.099744
+          "sym": "Vx",
+          "weight": 25,
+          "units": 0.00021514386607376405,
+          "basePx": 382.3,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.011852000000000001
+        },
+        {
+          "sym": "MAx",
+          "weight": 25,
+          "units": 0.00013763994176414478,
+          "basePx": 597.57,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.07476100000000002
+        },
+        {
+          "sym": "GSx",
+          "weight": 15,
+          "units": 0.00004792210062245701,
+          "basePx": 1029.79,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.216618
         }
       ],
-      "weekReturn": 0.06619325000000043,
+      "weekReturn": 0.13304749999999999,
       "rank": 1
     },
     {
-      "id": "blue-chip",
-      "name": "Blue-Chip Store of Value",
-      "prompt": "Weight the two most liquid, institutionally-held crypto assets by market dominance.",
-      "rationale": "BTC leads on dominance and custody depth; ETH adds settlement and yield. Two names, minimal noise.",
-      "weights": {
-        "BTC": 60,
-        "ETH": 40
-      },
-      "vault": "0xF8388135B56B56308dD68071241A7eEfA4F8BA15",
-      "depositor": "0x3A74e50EC3b1BA589CBB048030deC8DfB7Dc73A2",
+      "id": "ai-semiconductors",
+      "name": "AI & Semiconductors",
+      "prompt": "Build a basket of the picks-and-shovels of the AI buildout: GPU, foundry and memory names, overweight the compute leader.",
+      "kind": "rwa",
+      "vault": null,
       "aumFlr": 50,
-      "aumUsd": 0.3285495,
+      "aumUsd": 0.328998,
       "feeFlr": 1,
-      "feeTx": "0xc4f4cd8c91a9e6c6d20b5e5def7de1448992f563985871138fb4efb777a88e37",
-      "depositTx": "0xe3b1127c7da026451737ba64719df306c10cb799381f3b271e8d27e1f56bb961",
-      "rebalanceTx": "0x5659292971f29b91a4ad9d130bf85b3910e556802086fe1bb30473e00e9beb0f",
       "positions": [
         {
-          "sym": "BTC",
-          "weight": 60,
-          "units": 0.000002567827789975,
-          "basePx": 76769.05,
-          "drift": 0.02277399999999999
+          "sym": "NVDAx",
+          "weight": 30,
+          "units": 0.00045111476758535586,
+          "basePx": 218.79,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.097551
         },
         {
-          "sym": "ETH",
-          "weight": 40,
-          "units": 0.000055112855296453,
-          "basePx": 2384.558,
-          "drift": -0.033814
+          "sym": "AVGOx",
+          "weight": 18,
+          "units": 0.00016195274298528686,
+          "basePx": 365.66,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.10739800000000002
+        },
+        {
+          "sym": "TSMx",
+          "weight": 16,
+          "units": 0.00012573672518810463,
+          "basePx": 418.65,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.045209
+        },
+        {
+          "sym": "ASMLx",
+          "weight": 14,
+          "units": 0.000026824133713819818,
+          "basePx": 1717.1,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.109075
+        },
+        {
+          "sym": "AMDx",
+          "weight": 14,
+          "units": 0.0000990723365812738,
+          "basePx": 464.91,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.204062
+        },
+        {
+          "sym": "MUx",
+          "weight": 8,
+          "units": 0.00002832008780141386,
+          "basePx": 929.37,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.10628000000000001
         }
       ],
-      "weekReturn": 0.00013879999999888426,
+      "weekReturn": 0.09370508000000011,
       "rank": 2
     },
     {
-      "id": "flare-native",
-      "name": "Flare Ecosystem",
-      "prompt": "Overweight Flare and its flagship FAssets collateral asset.",
-      "rationale": "FLR as the native gas/stake asset, XRP as the first FAsset (FXRP) collateral. Ecosystem-aligned.",
-      "weights": {
-        "FLR": 60,
-        "XRP": 40
-      },
-      "vault": "0xBdA9333A8e69A341103e195e2A8207D1A9ddaCC1",
-      "depositor": "0x037090FC9852163096E9Ae3E2410C629A842270b",
+      "id": "mag-7-tokenized",
+      "name": "Mag-7 Tokenized",
+      "prompt": "Hold the seven mega-cap US tech names as tokenized equities, weighted by market cap and tilted to the largest.",
+      "kind": "rwa",
+      "vault": null,
       "aumFlr": 50,
-      "aumUsd": 0.3285495,
+      "aumUsd": 0.328998,
       "feeFlr": 1,
-      "feeTx": "0x80d31a0992f683235517281961e4295100e78bfac38273d5568821a150a2c056",
-      "depositTx": "0xc80bd8c8c51b2256aa38d5a61866d93a47685a425feda8f8f42acd0d68aa9e54",
-      "rebalanceTx": "0x2c95de6f7a27a387aad553ae8231c716120bb22662e8ab923206f48df9c36d31",
       "positions": [
         {
-          "sym": "FLR",
-          "weight": 60,
-          "units": 30,
-          "basePx": 0.00657099,
-          "drift": -0.101238
+          "sym": "NVDAx",
+          "weight": 20,
+          "units": 0.0003007431783902372,
+          "basePx": 218.79,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.011754999999999988
         },
         {
-          "sym": "XRP",
-          "weight": 40,
-          "units": 0.09879241833563615,
-          "basePx": 1.330262,
-          "drift": 0.140336
+          "sym": "AAPLx",
+          "weight": 18,
+          "units": 0.0002027306151792133,
+          "basePx": 292.11,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.201869
+        },
+        {
+          "sym": "MSFTx",
+          "weight": 18,
+          "units": 0.00011651216872921872,
+          "basePx": 508.27,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.098411
+        },
+        {
+          "sym": "AMZNx",
+          "weight": 14,
+          "units": 0.0001739152695967377,
+          "basePx": 264.84,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.13314399999999998
+        },
+        {
+          "sym": "GOOGLx",
+          "weight": 12,
+          "units": 0.00011314521537271086,
+          "basePx": 348.93,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.12274899999999997
+        },
+        {
+          "sym": "METAx",
+          "weight": 10,
+          "units": 0.00005379476111056607,
+          "basePx": 611.58,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.24611600000000003
+        },
+        {
+          "sym": "TSLAx",
+          "weight": 8,
+          "units": 0.0000680979042690815,
+          "basePx": 386.5,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.02286000000000002
         }
       ],
-      "weekReturn": -0.004608400000000068,
+      "weekReturn": 0.07422952000000049,
       "rank": 3
     },
     {
-      "id": "high-beta",
-      "name": "High-Beta Momentum",
-      "prompt": "Maximize exposure to high-volatility momentum names for a risk-on week.",
-      "rationale": "SOL and DOGE carry the most retail beta; AVAX amplifies on up-moves. High risk, high spread.",
-      "weights": {
-        "SOL": 40,
-        "DOGE": 40,
-        "AVAX": 20
-      },
-      "vault": "0x2acB442AD2D1Fb2C1A0DFeded9F1bdbfC719a43f",
-      "depositor": "0xEd710832e801539Dc9d53CF186512A1127d7ec0f",
+      "id": "consumer-brands",
+      "name": "Consumer Brands",
+      "prompt": "Defensive consumer staples and brands with pricing power: warehouse retail, big-box, fast food, beverages, coffee and apparel.",
+      "kind": "rwa",
+      "vault": null,
       "aumFlr": 50,
-      "aumUsd": 0.3285495,
+      "aumUsd": 0.328998,
       "feeFlr": 1,
-      "feeTx": "0x87f5357bd6fc48d9624aca12c5f6835b585ba785b359ff34194a2b76c4ccaac0",
-      "depositTx": "0x1da1e63acc543806c8da14168cdea56b0eee688693b12debc4223e64183c3ccb",
-      "rebalanceTx": "0x73bcd49b0df29ee6326ce6d9f0679327fdd7ab8e111c946dad2ab56b299789c5",
       "positions": [
         {
-          "sym": "SOL",
-          "weight": 40,
-          "units": 0.001327317203236792,
-          "basePx": 99.0116,
-          "drift": 0.013744000000000006
+          "sym": "COSTon",
+          "weight": 22,
+          "units": 0.00007653867140409873,
+          "basePx": 945.66,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Ondo Global Markets Bvi Limited",
+          "drift": 0.206771
         },
         {
-          "sym": "DOGE",
-          "weight": 40,
-          "units": 1.6216858549587236,
-          "basePx": 0.081039,
-          "drift": -0.0072399999999999964
-        },
-        {
-          "sym": "AVAX",
+          "sym": "WMTx",
           "weight": 20,
-          "units": 0.00919880279590274,
-          "basePx": 7.14331,
-          "drift": -0.09332599999999999
+          "units": 0.0006311712230215827,
+          "basePx": 104.25,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.046381000000000006
+        },
+        {
+          "sym": "MCDx",
+          "weight": 18,
+          "units": 0.0002218130197018503,
+          "basePx": 266.98,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.10034600000000002
+        },
+        {
+          "sym": "KOx",
+          "weight": 16,
+          "units": 0.0005802433862433863,
+          "basePx": 90.72,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.07183700000000001
+        },
+        {
+          "sym": "SBUXon",
+          "weight": 14,
+          "units": 0.0004299423130775694,
+          "basePx": 107.13,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Ondo Global Markets Bvi Limited",
+          "drift": -0.0010479999999999934
+        },
+        {
+          "sym": "NKEon",
+          "weight": 10,
+          "units": 0.0008507835531419705,
+          "basePx": 38.67,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Ondo Global Markets Bvi Limited",
+          "drift": -0.09947500000000001
         }
       ],
-      "weekReturn": -0.016063599999999956,
+      "weekReturn": 0.07422779999999984,
       "rank": 4
     },
     {
-      "id": "payments",
-      "name": "Payments & Settlement",
-      "prompt": "Assets used primarily for cross-border value transfer and settlement.",
-      "rationale": "XRP is the payments primitive; FLR adds FAssets/data connectivity to the same thesis.",
-      "weights": {
-        "XRP": 70,
-        "FLR": 30
-      },
-      "vault": "0xb376ADb4EF3B05BEc542237d52A6A5678eF004f6",
-      "depositor": "0x9979fF722f244fDbe4697e13E472521aEdC6E9Fe",
+      "id": "precious-metals",
+      "name": "Precious Metals Basket",
+      "prompt": "Tokenized precious metals as an inflation hedge, priced live on FTSO where available: gold-heavy, with silver, platinum and palladium.",
+      "kind": "rwa",
+      "vault": null,
       "aumFlr": 50,
-      "aumUsd": 0.3285495,
+      "aumUsd": 0.328998,
       "feeFlr": 1,
-      "feeTx": "0x8cfcce1536840376cd8546e96b8008a816d5978b18475f53927d0b57ab625020",
-      "depositTx": "0xa6e521af794a73b094dc4144d52ea613f83619d6e907602fe7190b828dc11e24",
-      "rebalanceTx": "0xed280416a830393a2b92869ec76ee62ba28545eb7917b1e481816a47d86eb6d8",
       "positions": [
         {
-          "sym": "XRP",
-          "weight": 70,
-          "units": 0.17288673208736324,
-          "basePx": 1.330262,
-          "drift": -0.125662
+          "sym": "XAUT0",
+          "weight": 50,
+          "units": 0.00004076802973977695,
+          "basePx": 4035,
+          "source": "csv",
+          "assetClass": "precious-metals",
+          "issuer": "Usdt0 Network Xaut0 Deployments",
+          "drift": -0.096852
         },
         {
-          "sym": "FLR",
-          "weight": 30,
-          "units": 15,
-          "basePx": 0.00657099,
-          "drift": 0.15444
+          "sym": "SLV",
+          "weight": 25,
+          "units": 0.0012081301410105758,
+          "basePx": 68.08,
+          "source": "csv",
+          "assetClass": "precious-metals",
+          "issuer": "Robinhood Markets Inc",
+          "drift": 0.126576
+        },
+        {
+          "sym": "PPLTon",
+          "weight": 15,
+          "units": 0.000027370881863560732,
+          "basePx": 1803,
+          "source": "csv",
+          "assetClass": "precious-metals",
+          "issuer": "Ondo Global Markets Bvi Limited",
+          "drift": 0.198257
+        },
+        {
+          "sym": "PALLx",
+          "weight": 10,
+          "units": 0.000023754368231046932,
+          "basePx": 1385,
+          "source": "csv",
+          "assetClass": "precious-metals",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.08403799999999999
         }
       ],
-      "weekReturn": -0.041631399999999874,
+      "weekReturn": 0.004552749999999994,
       "rank": 5
+    },
+    {
+      "id": "crypto-equity-complex",
+      "name": "Crypto-Equity Complex",
+      "prompt": "Get equity-market exposure to the crypto economy: an exchange, a bitcoin treasury, a stablecoin issuer and a retail broker.",
+      "kind": "rwa",
+      "vault": null,
+      "aumFlr": 50,
+      "aumUsd": 0.328998,
+      "feeFlr": 1,
+      "positions": [
+        {
+          "sym": "COINx",
+          "weight": 35,
+          "units": 0.0006183176716962896,
+          "basePx": 186.23,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.0003599999999999992
+        },
+        {
+          "sym": "MSTRx",
+          "weight": 30,
+          "units": 0.0005921135041094247,
+          "basePx": 166.69,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.066021
+        },
+        {
+          "sym": "HOODx",
+          "weight": 20,
+          "units": 0.0005809093316853536,
+          "basePx": 113.27,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.13972299999999999
+        },
+        {
+          "sym": "CRCLx",
+          "weight": 15,
+          "units": 0.0006165629685157421,
+          "basePx": 80.04,
+          "source": "csv",
+          "assetClass": "public-equities",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.0693
+        }
+      ],
+      "weekReturn": -0.03748190000000018,
+      "rank": 6
+    },
+    {
+      "id": "tokenized-index-funds",
+      "name": "Tokenized Index Funds",
+      "prompt": "A one-line broad-market allocation using tokenized ETFs: large-cap core, Nasdaq growth tilt, small-cap kicker.",
+      "kind": "rwa",
+      "vault": null,
+      "aumFlr": 50,
+      "aumUsd": 0.328998,
+      "feeFlr": 1,
+      "positions": [
+        {
+          "sym": "SPYx",
+          "weight": 50,
+          "units": 0.00002212494956287828,
+          "basePx": 7435,
+          "source": "csv",
+          "assetClass": "equity-indices",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.10097999999999999
+        },
+        {
+          "sym": "QQQx",
+          "weight": 35,
+          "units": 0.00016115390536436538,
+          "basePx": 714.53,
+          "source": "csv",
+          "assetClass": "equity-indices",
+          "issuer": "Backed Assets Je Limited",
+          "drift": -0.076513
+        },
+        {
+          "sym": "IWMx",
+          "weight": 15,
+          "units": 0.00016530347692101562,
+          "basePx": 298.54,
+          "source": "csv",
+          "assetClass": "equity-indices",
+          "issuer": "Backed Assets Je Limited",
+          "drift": 0.150699
+        }
+      ],
+      "weekReturn": -0.05466470000000001,
+      "rank": 7
     }
   ]
 };

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Build an Index - RWA Universe (Attested Index Competition)</title>
+<style>
+  :root { --bg:#0b0e14; --card:#141924; --line:#232a38; --fg:#e6edf3; --mut:#8b97a7;
+          --grn:#3fb950; --red:#f85149; --acc:#58a6ff; --gold:#e3b341; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  a { color:var(--acc); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .wrap { max-width:1180px; margin:0 auto; padding:24px 20px 80px; }
+  h1 { margin:0 0 4px; font-size:23px; }
+  .sub { color:var(--mut); margin-bottom:16px; }
+  .sub .nav { float:right; }
+  .grid { display:grid; grid-template-columns:1fr 400px; gap:20px; align-items:start; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .card h2 { margin:0 0 10px; font-size:14px; text-transform:uppercase; letter-spacing:.4px; color:var(--mut); }
+  input, select { background:#0d1119; color:var(--fg); border:1px solid var(--line);
+                  border-radius:8px; padding:8px 10px; font-size:14px; outline:none; }
+  input:focus, select:focus { border-color:var(--acc); }
+  .filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .filters input[type=search] { flex:1 1 220px; }
+  .count { color:var(--mut); font-size:12px; margin:4px 0 10px; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.4px;
+       color:var(--mut); padding:8px 8px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--card); }
+  td { padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:hover td { background:#10151f; }
+  .tk { font-weight:600; }
+  .iss { color:var(--mut); font-size:12px; }
+  .sml { color:var(--mut); font-size:11.5px; }
+  .badge { display:inline-block; font-size:10.5px; padding:1px 6px; border-radius:5px; border:1px solid var(--line); color:#aeb9c9; }
+  .b-ftso { background:#12261a; color:var(--grn); border-color:#1c3a26; }
+  .b-csv { background:#1b2233; color:#9db2d6; }
+  .b-none { background:#2a1416; color:#f0a; border-color:#3a1c26; opacity:.8; }
+  .num { text-align:right; white-space:nowrap; }
+  button { cursor:pointer; border-radius:8px; border:1px solid var(--line); background:#1b2233; color:var(--fg);
+           font-size:13px; padding:6px 10px; }
+  button:hover { border-color:var(--acc); }
+  button.add { padding:3px 9px; font-size:12px; }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  button.primary { background:#12261a; color:var(--grn); border-color:#1c3a26; font-weight:600; }
+  .side { position:sticky; top:16px; }
+  .picked { list-style:none; margin:0; padding:0; }
+  .picked li { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .picked .g { flex:1; min-width:0; }
+  .picked .tk { font-size:14px; }
+  .picked input.w { width:64px; text-align:right; }
+  .picked .x { padding:2px 8px; font-size:12px; }
+  .total { display:flex; justify-content:space-between; align-items:center; margin:12px 0; font-weight:600; }
+  .total .val.ok { color:var(--grn); } .total .val.bad { color:var(--red); }
+  .row2 { display:flex; gap:8px; margin-bottom:10px; }
+  .row2 button { flex:1; }
+  .fld { display:block; margin-bottom:8px; }
+  .fld input, .fld textarea { width:100%; }
+  textarea { background:#0d1119; color:var(--fg); border:1px solid var(--line); border-radius:8px;
+             padding:8px 10px; font:14px/1.4 inherit; resize:vertical; min-height:52px; }
+  .empty { color:var(--mut); font-size:13px; padding:14px 0; }
+  pre { background:#0d1119; border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto;
+        font-size:11.5px; max-height:180px; white-space:pre-wrap; word-break:break-all; }
+  .hint { color:var(--mut); font-size:11.5px; margin-top:6px; }
+  .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:#12261a; color:var(--grn);
+           border:1px solid #1c3a26; border-radius:8px; padding:8px 14px; font-size:13px; opacity:0; transition:opacity .2s; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Build an Index</h1>
+  <div class="sub">
+    Pick tokenized real-world assets, set a weight for each, and submit your index to the competition.
+    <span class="nav"><a href="index.html">&larr; Leaderboard</a></span>
+  </div>
+
+  <div class="grid">
+    <!-- Universe -->
+    <div class="card">
+      <h2>RWA universe <span id="uni-meta" class="sml"></span></h2>
+      <div class="filters">
+        <input type="search" id="q" placeholder="Search ticker, name or issuer (e.g. TSLA, gold, ondo)" />
+        <select id="fclass"><option value="">All classes</option></select>
+        <select id="fprice">
+          <option value="priceable">Priceable only</option>
+          <option value="ftso">FTSO live</option>
+          <option value="csv">CSV snapshot</option>
+          <option value="all">All (incl. unpriced)</option>
+        </select>
+        <select id="faccess">
+          <option value="">Any access</option>
+          <option value="permissionless">Permissionless</option>
+          <option value="permissioned">Permissioned</option>
+        </select>
+      </div>
+      <div class="count" id="count"></div>
+      <div style="max-height:62vh; overflow:auto;">
+        <table>
+          <thead><tr><th>Instrument</th><th>Class</th><th>Venues / chains</th>
+            <th class="num">Price</th><th>Src</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Your index -->
+    <div class="side">
+      <div class="card">
+        <h2>Your index</h2>
+        <label class="fld"><input id="iname" placeholder="Index name (e.g. Mag-7 Tokenized)" /></label>
+        <label class="fld"><textarea id="iprompt" placeholder="Thesis / prompt: what is this index and why these weights?"></textarea></label>
+        <ul class="picked" id="picked"></ul>
+        <div class="empty" id="empty">No assets yet. Add from the universe on the left.</div>
+        <div class="total">
+          <span>Total weight</span>
+          <span class="val bad" id="wtotal">0%</span>
+        </div>
+        <div class="row2">
+          <button id="equal">Equal weight</button>
+          <button id="normalize">Normalize to 100%</button>
+        </div>
+        <button class="primary" id="submit" style="width:100%" disabled>Add index to competition</button>
+        <div class="hint" id="submithint">Weights must sum to 100% and include at least one asset.</div>
+      </div>
+
+      <div class="card" id="builtcard" style="margin-top:16px; display:none;">
+        <h2>Submitted indices (<span id="nbuilt">0</span>)</h2>
+        <ul class="picked" id="built"></ul>
+        <div class="row2" style="margin-top:12px;">
+          <button id="download" class="primary">Download user-baskets.json</button>
+          <button id="copy">Copy JSON</button>
+        </div>
+        <div class="hint">Drop <code>user-baskets.json</code> into <code>demo/</code> and run
+          <code>node orchestrate.mjs</code>. The FCC tee-node signs each index's weights and prices
+          (FTSO where available, else the CSV snapshot) and rebalances a real vault on Coston2.</div>
+        <pre id="preview"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="catalog.js"></script>
+<script>
+  const C = window.CATALOG;
+  const assets = C.assets;
+  const byId = new Map(assets.map(a => [a.id, a]));
+  const usd = x => x == null ? "-" : "$" + x.toLocaleString(undefined, {maximumFractionDigits: x < 10 ? 4 : 2});
+  const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "index";
+  const $ = id => document.getElementById(id);
+
+  // populate class filter
+  C.classes.forEach(c => {
+    const o = document.createElement("option"); o.value = c; o.textContent = c; $("fclass").appendChild(o);
+  });
+  $("uni-meta").textContent =
+    `- ${C.total.toLocaleString()} instruments (unique ticker+issuer), ${C.priceable} priceable, ${C.ftsoCount} live on FTSO`;
+
+  const picked = new Map(); // id -> weight (number)
+
+  function priceBadge(a) {
+    if (a.priceSource === "ftso") return '<span class="badge b-ftso">FTSO</span>';
+    if (a.priceSource === "csv") return `<span class="badge b-csv" title="${a.priceExact ? "instrument price" : "underlying price"}">CSV</span>`;
+    return '<span class="badge b-none">no price</span>';
+  }
+
+  function renderUniverse() {
+    const q = $("q").value.trim().toLowerCase();
+    const fc = $("fclass").value, fp = $("fprice").value, fa = $("faccess").value;
+    let list = assets.filter(a => {
+      if (fc && a.assetClass !== fc) return false;
+      if (fa && a.access !== fa) return false;
+      if (fp === "priceable" && !a.priceSource) return false;
+      if (fp === "ftso" && a.priceSource !== "ftso") return false;
+      if (fp === "csv" && a.priceSource !== "csv") return false;
+      if (q) {
+        const hay = (a.ticker + " " + a.name + " " + a.issuerName + " " + a.issuer).toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const total = list.length;
+    const shown = list.slice(0, 250);
+    $("count").textContent =
+      `${total.toLocaleString()} match${total === 1 ? "" : "es"}` + (total > shown.length ? ` (showing first ${shown.length})` : "");
+    $("rows").innerHTML = shown.map(a => {
+      const venues = a.venues.slice(0, 3).join(", ") + (a.venues.length > 3 ? ` +${a.venues.length - 3}` : "");
+      const inIdx = picked.has(a.id);
+      const canAdd = !!a.priceSource && !inIdx;
+      return `<tr>
+        <td><div class="tk">${a.ticker}</div><div class="iss">${a.name} - ${a.issuerName}</div></td>
+        <td class="sml">${a.assetClass}<br>${a.access}</td>
+        <td class="sml">${venues || "-"}${a.chains ? `<br>${a.chains} chain${a.chains > 1 ? "s" : ""}` : ""}</td>
+        <td class="num">${usd(a.priceUsd)}</td>
+        <td>${priceBadge(a)}</td>
+        <td><button class="add" data-id="${a.id}" ${canAdd ? "" : "disabled"}>${inIdx ? "added" : a.priceSource ? "+ add" : "n/a"}</button></td>
+      </tr>`;
+    }).join("");
+    $("rows").querySelectorAll("button.add").forEach(b =>
+      b.addEventListener("click", () => addAsset(b.dataset.id)));
+  }
+
+  function addAsset(id) {
+    if (picked.has(id)) return;
+    picked.set(id, 0);
+    autoWeight();
+    renderPicked(); renderUniverse();
+  }
+  function removeAsset(id) { picked.delete(id); renderPicked(); renderUniverse(); }
+
+  function autoWeight() {
+    // give a fresh asset an even slice of the remaining room, or split evenly if none set
+    const n = picked.size;
+    if (!n) return;
+    const even = Math.floor(100 / n);
+    let rem = 100;
+    [...picked.keys()].forEach((id, i) => {
+      const w = i === n - 1 ? rem : even;
+      picked.set(id, w); rem -= w;
+    });
+  }
+
+  function total() { return [...picked.values()].reduce((a, b) => a + (Number(b) || 0), 0); }
+
+  function renderPicked() {
+    const ids = [...picked.keys()];
+    $("empty").style.display = ids.length ? "none" : "block";
+    $("picked").innerHTML = ids.map(id => {
+      const a = byId.get(id);
+      return `<li>
+        <div class="g"><div class="tk">${a.ticker} <span class="badge ${a.priceSource === "ftso" ? "b-ftso" : "b-csv"}">${a.priceSource.toUpperCase()}</span></div>
+          <div class="iss">${a.name} - ${a.issuerName}</div></div>
+        <input class="w" type="number" min="0" max="100" step="1" data-id="${id}" value="${picked.get(id)}" /> %
+        <button class="x" data-id="${id}">x</button>
+      </li>`;
+    }).join("");
+    $("picked").querySelectorAll("input.w").forEach(inp =>
+      inp.addEventListener("input", () => { picked.set(inp.dataset.id, Number(inp.value)); refreshTotal(); }));
+    $("picked").querySelectorAll("button.x").forEach(b =>
+      b.addEventListener("click", () => removeAsset(b.dataset.id)));
+    refreshTotal();
+  }
+
+  function refreshTotal() {
+    const t = total(), ok = t === 100 && picked.size > 0;
+    const el = $("wtotal");
+    el.textContent = t + "%"; el.className = "val " + (ok ? "ok" : "bad");
+    $("submit").disabled = !ok || !$("iname").value.trim();
+  }
+
+  function normalize() {
+    const t = total();
+    if (!t) { autoWeight(); renderPicked(); return; }
+    const ids = [...picked.keys()];
+    let acc = 0;
+    ids.forEach((id, i) => {
+      let w = Math.round((Number(picked.get(id)) || 0) / t * 100);
+      if (i === ids.length - 1) w = 100 - acc;
+      picked.set(id, w); acc += w;
+    });
+    renderPicked();
+  }
+
+  const built = [];
+  function submit() {
+    const name = $("iname").value.trim();
+    if (total() !== 100 || !name) return;
+    const weights = {}; picked.forEach((w, id) => weights[id] = w);
+    const basket = { id: slug(name), name, prompt: $("iprompt").value.trim() || name, kind: "rwa", weights };
+    built.push(basket);
+    renderBuilt();
+    toast(`Added "${name}" to the competition`);
+    // reset for the next index
+    picked.clear(); $("iname").value = ""; $("iprompt").value = "";
+    renderPicked(); renderUniverse();
+  }
+
+  function renderBuilt() {
+    $("builtcard").style.display = built.length ? "block" : "none";
+    $("nbuilt").textContent = built.length;
+    $("built").innerHTML = built.map((b, i) => {
+      const legs = Object.entries(b.weights).map(([id, w]) => `${byId.get(id).ticker} ${w}%`).join(", ");
+      return `<li><div class="g"><div class="tk">${b.name}</div><div class="iss">${legs}</div></div>
+        <button class="x" data-i="${i}">x</button></li>`;
+    }).join("");
+    $("built").querySelectorAll("button.x").forEach(b =>
+      b.addEventListener("click", () => { built.splice(+b.dataset.i, 1); renderBuilt(); }));
+    $("preview").textContent = JSON.stringify(built, null, 2);
+  }
+
+  function download() {
+    const blob = new Blob([JSON.stringify(built, null, 2)], {type: "application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "user-baskets.json"; a.click();
+    URL.revokeObjectURL(a.href);
+  }
+  function copy() {
+    navigator.clipboard.writeText(JSON.stringify(built, null, 2)).then(() => toast("Copied JSON"));
+  }
+  let toastT;
+  function toast(msg) {
+    const t = $("toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 1800);
+  }
+
+  ["input", "change"].forEach(ev => {
+    $("q").addEventListener(ev, renderUniverse);
+    $("fclass").addEventListener(ev, renderUniverse);
+    $("fprice").addEventListener(ev, renderUniverse);
+    $("faccess").addEventListener(ev, renderUniverse);
+  });
+  $("iname").addEventListener("input", refreshTotal);
+  $("equal").addEventListener("click", () => { autoWeight(); renderPicked(); });
+  $("normalize").addEventListener("click", normalize);
+  $("submit").addEventListener("click", submit);
+  $("download").addEventListener("click", download);
+  $("copy").addEventListener("click", copy);
+
+  renderUniverse(); renderPicked();
+</script>
+</body>
+</html>

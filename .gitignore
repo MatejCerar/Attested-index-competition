@@ -4,3 +4,6 @@ out/
 cache/
 .env
 *.log
+
+# large raw source; catalog.js/json are the committed, derived universe
+rwa-database.txt

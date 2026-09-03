@@ -1,7 +1,0 @@
-{
-  "name": "index-competition-demo",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "dependencies": {"ethers": "^6.13.0"}
-}

@@ -1,0 +1,324 @@
+{
+  "generatedAt": "2026-09-03T12:19:26.673Z",
+  "network": "off-chain live competition",
+  "feeBps": 200,
+  "platformRevenueUsd": 0,
+  "live": true,
+  "attestedBy": "off-chain live competition (no chain)",
+  "indices": [
+    {
+      "id": "matej-1",
+      "name": "Matej 1",
+      "prompt": "Matej 1",
+      "owner": "you",
+      "mine": true,
+      "weights": {
+        "SK hynix Inc.": 53,
+        "Crude Oil (WTI)": 29,
+        "Nasdaq-100 Index": 18
+      },
+      "strategy": "five-minute-or-drift-2",
+      "strategyName": "Five minute or 2% drift",
+      "rebalanceReason": "interval elapsed",
+      "vault": "0xef749278eba072799ef64d57b7126ee496262c56",
+      "rebalanceTx": "0xd183edb2af8bc91cd5710afad951e8d5c0462ad87969af54d0c34aae85f5b57d",
+      "txSample": true,
+      "positions": [
+        {
+          "sym": "SK hynix Inc.",
+          "weight": 53,
+          "units": 44.6850638445787,
+          "basePx": 1207.5,
+          "drift": 0.010206844572464568,
+          "source": "yahoo"
+        },
+        {
+          "sym": "Crude Oil (WTI)",
+          "weight": 29,
+          "units": 323.935784021708,
+          "basePx": 85.99,
+          "drift": 0.06925494731418724,
+          "source": "yahoo"
+        },
+        {
+          "sym": "Nasdaq-100 Index",
+          "weight": 18,
+          "units": 0.6212154012810726,
+          "basePx": 29362,
+          "drift": 0.008778848751203272,
+          "source": "yahoo"
+        }
+      ],
+      "weekReturn": 0.02692552533235837,
+      "rank": 1
+    },
+    {
+      "id": "precious-metals",
+      "name": "Precious Metals",
+      "prompt": "Tokenized precious metals as an inflation hedge: gold-heavy with silver, platinum, palladium.",
+      "weights": {
+        "XAUT0": 50,
+        "SLV": 25,
+        "PPLTon": 15,
+        "PALLx": 10
+      },
+      "strategy": "hourly-or-drift-5",
+      "strategyName": "Hourly or 5% drift",
+      "rebalanceReason": "interval elapsed",
+      "positions": [
+        {
+          "sym": "XAUT0",
+          "weight": 50,
+          "units": 11.189166953415675,
+          "basePx": 4470.3,
+          "drift": 0.005077958973670693,
+          "source": "yahoo"
+        },
+        {
+          "sym": "SLV",
+          "weight": 25,
+          "units": 377.90321312176803,
+          "basePx": 66.06,
+          "drift": 0.003784438389343059,
+          "source": "yahoo"
+        },
+        {
+          "sym": "PPLTon",
+          "weight": 15,
+          "units": 8.478537646820456,
+          "basePx": 1767.1,
+          "drift": 0.0056589893045102535,
+          "source": "yahoo"
+        },
+        {
+          "sym": "PALLx",
+          "weight": 10,
+          "units": 7.279334923392372,
+          "basePx": 1378.5,
+          "drift": 0.00036271309394275697,
+          "source": "yahoo"
+        }
+      ],
+      "weekReturn": 0.0043710129532377184,
+      "rank": 2
+    },
+    {
+      "id": "mag-7-rwa",
+      "name": "Big-Tech RWA",
+      "prompt": "Mega-cap US tech as tokenized equities, tilted to the largest names.",
+      "weights": {
+        "NVDAx": 25,
+        "AAPLx": 20,
+        "MSFTx": 20,
+        "AMZNx": 18,
+        "GOOGLx": 17
+      },
+      "strategy": "thirty-minute-or-drift-5",
+      "strategyName": "Thirty minute or 5% drift",
+      "rebalanceReason": "interval elapsed",
+      "positions": [
+        {
+          "sym": "NVDAx",
+          "weight": 25,
+          "units": 111.40323514994876,
+          "basePx": 224.41,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "AAPLx",
+          "weight": 20,
+          "units": 61.546036435253576,
+          "basePx": 324.96,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "MSFTx",
+          "weight": 20,
+          "units": 40.25602834024395,
+          "basePx": 496.82,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "AMZNx",
+          "weight": 18,
+          "units": 70.59377206055377,
+          "basePx": 254.98,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "GOOGLx",
+          "weight": 17,
+          "units": 50.42714760322734,
+          "basePx": 337.12,
+          "drift": 0,
+          "source": "yahoo"
+        }
+      ],
+      "weekReturn": 0,
+      "rank": 3
+    },
+    {
+      "id": "ai-semiconductors",
+      "name": "AI & Semiconductors",
+      "prompt": "Picks-and-shovels of the AI buildout: GPU, foundry and memory names.",
+      "weights": {
+        "NVDAx": 30,
+        "AVGOx": 18,
+        "TSMx": 16,
+        "ASMLx": 14,
+        "AMDx": 14,
+        "MUx": 8
+      },
+      "strategy": "minute",
+      "strategyName": "Minute",
+      "rebalanceReason": "interval elapsed",
+      "positions": [
+        {
+          "sym": "NVDAx",
+          "weight": 30,
+          "units": 133.6838821799385,
+          "basePx": 224.41,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "AVGOx",
+          "weight": 18,
+          "units": 49.01426859819192,
+          "basePx": 367.24,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "TSMx",
+          "weight": 16,
+          "units": 38.50782190132371,
+          "basePx": 415.5,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "ASMLx",
+          "weight": 14,
+          "units": 8.321940200915414,
+          "basePx": 1682.3,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "AMDx",
+          "weight": 14,
+          "units": 30.630551787511486,
+          "basePx": 457.06,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "MUx",
+          "weight": 8,
+          "units": 8.367500627562547,
+          "basePx": 956.08,
+          "drift": 0,
+          "source": "yahoo"
+        }
+      ],
+      "weekReturn": 0,
+      "rank": 4
+    },
+    {
+      "id": "wall-street-financials",
+      "name": "Wall Street Financials",
+      "prompt": "Money-center banking and card-network rails as tokenized equities.",
+      "weights": {
+        "JPMx": 35,
+        "Vx": 25,
+        "MAx": 25,
+        "GSx": 15
+      },
+      "strategy": "ten-minute-or-drift-2",
+      "strategyName": "Ten minute or 2% drift",
+      "rebalanceReason": "interval elapsed",
+      "positions": [
+        {
+          "sym": "JPMx",
+          "weight": 35,
+          "units": 98.2538880467127,
+          "basePx": 356.22,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "Vx",
+          "weight": 25,
+          "units": 66.06765327695561,
+          "basePx": 378.4,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "MAx",
+          "weight": 25,
+          "units": 42.50688611555072,
+          "basePx": 588.14,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "GSx",
+          "weight": 15,
+          "units": 14.933991756436551,
+          "basePx": 1004.42,
+          "drift": 0,
+          "source": "yahoo"
+        }
+      ],
+      "weekReturn": 0,
+      "rank": 5
+    },
+    {
+      "id": "tokenized-index-funds",
+      "name": "Tokenized Index Funds",
+      "prompt": "A broad-market allocation using tokenized ETFs: large-cap core, Nasdaq growth tilt, small-cap kicker.",
+      "weights": {
+        "SPYx": 50,
+        "QQQx": 35,
+        "IWMx": 15
+      },
+      "strategy": "drift-5",
+      "strategyName": "Drift 5%",
+      "rebalanceReason": "none yet",
+      "positions": [
+        {
+          "sym": "SPYx",
+          "weight": 50,
+          "units": 65.3458100266611,
+          "basePx": 765.16,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "QQQx",
+          "weight": 35,
+          "units": 49.348598499802605,
+          "basePx": 709.24,
+          "drift": 0,
+          "source": "yahoo"
+        },
+        {
+          "sym": "IWMx",
+          "weight": 15,
+          "units": 51.01867283425734,
+          "basePx": 294.01,
+          "drift": 0,
+          "source": "yahoo"
+        }
+      ],
+      "weekReturn": 0,
+      "rank": 6
+    }
+  ]
+}

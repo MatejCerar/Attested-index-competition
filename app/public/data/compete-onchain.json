@@ -1,0 +1,80 @@
+{
+  "generatedAt": "2026-09-03T11:28:53.897Z",
+  "rpc": "https://coston2-api.flare.network/ext/C/rpc",
+  "network": "Coston2 (chain 114)",
+  "stable": "0x800422CD55549fd71bA3C3A283cBB287836aAe54",
+  "tee": "0x8FFf2C049eDe07D33716d312d53D3FF03a65BD65",
+  "capital": 1000,
+  "pools": {
+    "NVDAx": "0x4C2871f6D911B7c633996B4D68d6d1B70B401887",
+    "AAPLx": "0xBfF8915D15B3A23131dA6C99D1437336426a1235",
+    "MSFTx": "0x1695A656E7f8566B742571094E7d976e1b529bde",
+    "AMZNx": "0x83F474a0Ba0c9F36fB76Dee574F530d8e5E0Fe38",
+    "GOOGLx": "0x26034f48c8bc498028B79EDC90fcaBBE27aEeBd6",
+    "AVGOx": "0x3571419ac9c9631c7d797AF32119E9146aDa71Fc",
+    "TSMx": "0x43Bf0331b4aBdd3a04A8E728ce3E7B9725ccaA20",
+    "ASMLx": "0x52fd323c9dbD34528bb703f24D3F75f877669490",
+    "AMDx": "0x14A51AB1C9b13f168Df49E1D6ecb48A1a51c6Bc2",
+    "MUx": "0xBCB2816278fB09D4ed17864E0f9E0e0597456B82",
+    "JPMx": "0x6BC67fCC50Ab58ED50F42EAe0163411799Ca4973",
+    "Vx": "0x39677948C9Df1747030ee50e6b6a9087c400f84F",
+    "MAx": "0xF63dA5794191Bb00B39Fca206d5b61426aA262f5",
+    "GSx": "0xf367D1cf584507dde80b1f3A319BE074202c9f2E",
+    "XAUT0": "0x2C1516f7b405681CA1b64Da9E3933C459D972eD3",
+    "SLV": "0xc014a6d19f26882995EA8f2215928F9a3Cb7AF5e",
+    "PPLTon": "0xa5350cE1838e981cD25DBDC0b9d7F29B7292123b",
+    "PALLx": "0x8Cb9b39dEf63205AB1e7DCa2DBD9598de327A52A",
+    "SPYx": "0x926aE80aF163377C2c1ebA39D6d8E9C8CC76baf5",
+    "QQQx": "0xdf2758c7567d92Da6f829e40090575F2f6e3760e",
+    "IWMx": "0x9f262EAfF81f4163DfE3563645B8cA4E8E3230De"
+  },
+  "vaults": {
+    "mag-7-rwa": {
+      "addr": "0x89267d063D079058811569fA311ed4320885996c",
+      "order": [
+        "NVDAx",
+        "AAPLx",
+        "MSFTx",
+        "AMZNx",
+        "GOOGLx"
+      ]
+    },
+    "ai-semiconductors": {
+      "addr": "0x9F5Dc89de4C3a52760fE850F262AdB4f8DDfbbf6",
+      "order": [
+        "NVDAx",
+        "AVGOx",
+        "TSMx",
+        "ASMLx",
+        "AMDx",
+        "MUx"
+      ]
+    },
+    "wall-street-financials": {
+      "addr": "0xa08667be287258CFC11f2BE4cE3166F5e6a3f7CD",
+      "order": [
+        "JPMx",
+        "Vx",
+        "MAx",
+        "GSx"
+      ]
+    },
+    "precious-metals": {
+      "addr": "0x7ED06545011c789D162D0ae2C5f667f27004bdC3",
+      "order": [
+        "XAUT0",
+        "SLV",
+        "PPLTon",
+        "PALLx"
+      ]
+    },
+    "tokenized-index-funds": {
+      "addr": "0xC55C87c327438eEd0778EE4e27Ee83A47E7513a9",
+      "order": [
+        "SPYx",
+        "QQQx",
+        "IWMx"
+      ]
+    }
+  }
+}

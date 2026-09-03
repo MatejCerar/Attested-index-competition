@@ -1,5 +1,13 @@
 {
   "type": "module",
+  "scripts": {
+    "demo": "node scripts/start.mjs",
+    "compete": "node scripts/start-compete.mjs",
+    "engine": "node scripts/live-engine.mjs",
+    "compete-setup": "node scripts/compete-setup.mjs",
+    "server": "node scripts/server.mjs",
+    "test": "node index/test/strategies.test.mjs"
+  },
   "dependencies": {
     "@flarenetwork/flare-periphery-contracts": "^0.1.51",
     "@openzeppelin/contracts": "^4.9.6",

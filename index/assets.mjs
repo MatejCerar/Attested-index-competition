@@ -1,5 +1,6 @@
-// The allowed index assets. Order is canonical and stable. Cash is the USD
-// stablecoin (valued 1.0) and is NOT one of these.
-export const ASSETS = ["BTC", "ETH", "XRP", "SOL", "AVAX", "DOGE", "FLR"];
+// RWA-only board: there are no fixed crypto symbols. The selectable universe is
+// the RWA catalog (see catalog.mjs). ASSETS stays exported as an empty list so
+// any legacy importer keeps working but can never select crypto.
+export const ASSETS = [];
 
 export const isAsset = (s) => ASSETS.includes(s);

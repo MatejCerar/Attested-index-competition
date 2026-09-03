@@ -42,11 +42,11 @@ contract StableIndexVaultTest is Test {
         w[2] = 2000;
     }
 
-    function _sign(
-        uint256 pk,
-        uint16[] memory w,
-        uint256[] memory p
-    ) internal view returns (bytes memory) {
+    function _sign(uint256 pk, uint16[] memory w, uint256[] memory p)
+        internal
+        view
+        returns (bytes memory)
+    {
         bytes32 h = keccak256(abi.encode(address(vault), vault.nonce(), w, p));
         bytes32 eth =
             keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", h));

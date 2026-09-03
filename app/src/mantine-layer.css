@@ -1,0 +1,4 @@
+@layer mantine;
+
+@import "@mantine/core/styles.css" layer(mantine);
+@import "@mantine/notifications/styles.css" layer(mantine);

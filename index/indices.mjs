@@ -1,55 +1,83 @@
 // Static index definitions. An index is the headline primitive: what goes
 // where (weights), how (a rebalance strategy), and the natural-language prompt
-// that produced it. Weights are integer percentages summing to 100 over the
-// allowed ASSETS. `strategy` references a template id from strategies.mjs.
-// Weights can be regenerated each minute from the prompt via generate.mjs.
+// that produced it. Weights are integer percentages summing to 100 over valid
+// RWA catalog ids (`Ticker::issuer`). `strategy` references a template id from
+// strategies.mjs. Weights can be regenerated from the prompt via generate.mjs.
+// RWA-only: no crypto anywhere.
 import {getStrategy} from "./strategies.mjs";
 
 export const INDICES = [
     {
-        id: "blue-chip",
-        name: "Blue-Chip Store of Value",
+        id: "mag-7-rwa",
+        name: "Big-Tech RWA",
         prompt:
-            "Weight the two most liquid, institutionally-held crypto assets by market dominance.",
+            "Mega-cap US tech as tokenized equities, tilted to the largest names.",
         rationale:
-            "BTC leads on dominance and custody depth; ETH adds settlement and yield. Two names, minimal noise.",
-        weights: {BTC: 60, ETH: 40},
+            "The seven mega-cap tech leaders as tokenized equities, cap-tilted to the largest.",
+        weights: {
+            "NVDAx::backed-assets-je-limited": 25,
+            "AAPLx::backed-assets-je-limited": 20,
+            "MSFTx::backed-assets-je-limited": 20,
+            "AMZNx::backed-assets-je-limited": 18,
+            "GOOGLx::backed-assets-je-limited": 17,
+        },
         strategy: "drift-5pct",
     },
     {
-        id: "l1-index",
-        name: "Smart-Contract L1 Index",
-        prompt: "Build a basket of leading smart-contract layer-1s, tilted to liquidity.",
+        id: "ai-semis",
+        name: "AI & Semiconductors",
+        prompt: "Picks-and-shovels of the AI buildout: GPU, foundry and memory names.",
         rationale:
-            "ETH as the base layer, SOL for throughput/retail flow, AVAX for subnet optionality.",
-        weights: {ETH: 45, SOL: 35, AVAX: 20},
+            "GPU, foundry and memory names, overweight the compute leader.",
+        weights: {
+            "NVDAx::backed-assets-je-limited": 30,
+            "AVGOx::backed-assets-je-limited": 18,
+            "TSMx::backed-assets-je-limited": 16,
+            "ASMLx::backed-assets-je-limited": 14,
+            "AMDx::backed-assets-je-limited": 14,
+            "MUx::backed-assets-je-limited": 8,
+        },
         strategy: "hourly",
     },
     {
-        id: "payments",
-        name: "Payments & Settlement",
-        prompt: "Assets used primarily for cross-border value transfer and settlement.",
+        id: "wall-street",
+        name: "Wall Street Financials",
+        prompt: "Money-center banking and card-network rails as tokenized equities.",
         rationale:
-            "XRP is the payments primitive; FLR adds FAssets/data connectivity to the same thesis.",
-        weights: {XRP: 70, FLR: 30},
+            "A money-center bank, the two card networks, and an investment bank.",
+        weights: {
+            "JPMx::backed-assets-je-limited": 35,
+            "Vx::backed-assets-je-limited": 25,
+            "MAx::backed-assets-je-limited": 25,
+            "GSx::backed-assets-je-limited": 15,
+        },
         strategy: "ten-minute",
     },
     {
-        id: "high-beta",
-        name: "High-Beta Momentum",
-        prompt: "Maximize exposure to high-volatility momentum names for a risk-on week.",
+        id: "precious-metals",
+        name: "Precious Metals",
+        prompt: "Tokenized precious metals as an inflation hedge, gold-heavy.",
         rationale:
-            "SOL and DOGE carry the most retail beta; AVAX amplifies on up-moves. High risk, high spread.",
-        weights: {SOL: 40, DOGE: 40, AVAX: 20},
+            "Gold-heavy, with silver, platinum and palladium.",
+        weights: {
+            "XAUT0::usdt0-network-xaut0-deployments": 50,
+            "SLV::robinhood-markets-inc": 25,
+            "PPLTon::ondo-global-markets-bvi-limited": 15,
+            "PALLx::backed-assets-je-limited": 10,
+        },
         strategy: "hourly-or-drift",
     },
     {
-        id: "flare-native",
-        name: "Flare Ecosystem",
-        prompt: "Overweight Flare and its flagship FAssets collateral asset.",
+        id: "index-funds",
+        name: "Tokenized Index Funds",
+        prompt: "A broad-market allocation using tokenized ETFs.",
         rationale:
-            "FLR as the native gas/stake asset, XRP as the first FAsset (FXRP) collateral. Ecosystem-aligned.",
-        weights: {FLR: 60, XRP: 40},
+            "Large-cap core, Nasdaq growth tilt, small-cap kicker.",
+        weights: {
+            "SPYx::backed-assets-je-limited": 50,
+            "QQQx::backed-assets-je-limited": 35,
+            "IWMx::backed-assets-je-limited": 15,
+        },
         strategy: "five-minute",
     },
 ];

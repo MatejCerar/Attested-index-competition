@@ -9,5 +9,16 @@ cache/
 rwa-database.txt
 
 # live competition output (regenerated each run)
-demo/frontend/live.js
+app/public/data/live.json
 broadcast/
+
+# app build output (node_modules covered by the top-level rule)
+app/dist/
+app/tsconfig.tsbuildinfo
+
+# filled TEE extension configs (secrets: keys + indexer DB creds); only the
+# tee-extension/env/*.example templates are tracked
+tee-extension/.env.coston2
+tee-extension/env/.env.coston2
+tee-extension/env/extension_proxy.coston2.docker.toml
+tee-extension/**/extension_proxy.coston2.docker.toml

@@ -1,5 +1,27 @@
 # Changelog
 
+## Real one-command flow, demo/ folded into scripts/ (2026-09-03)
+
+- Renamed `demo/` to `scripts/` (all internal relative imports unchanged). The
+  one external ref, `index/catalog.mjs`, now reads `scripts/catalog.json`.
+- Deleted the dead FTSO orchestrator `demo/orchestrate.mjs` (wrote to the
+  removed `demo/frontend/data.js`). Removed the dead `frontend/live.js` write in
+  `compete.mjs` (it now writes only `app/public/data/live.json`). Dropped the
+  redundant `scripts/package.json` + lockfile + node_modules: scripts resolve
+  ethers from the repo root.
+- New `scripts/server.mjs` (Node http, no framework, :8787): `POST /api/generate`
+  (real Claude Haiku via generateIndex), `POST /api/add` (validate + score with
+  the real vault rebalance math + upsert/re-rank the leaderboard; real Coston2
+  deposit + FCC rebalance when PK + TEE_SIGN_URL are set, else off-chain), and
+  `GET /api/leaderboard`. `scripts/orchestrate-add.mjs` holds the single-basket
+  on-chain path.
+- Wired the app: `app/.env.local` points generate + add at the server;
+  `app/src/core/add.ts` POSTs the basket; `/build` submit() now reaches the
+  leaderboard and invalidates the `["leaderboard"]` query, falling back to
+  local-only state with a notice when the server is down.
+- One command: `npm run demo` (`scripts/start.mjs`) runs the server + Vite dev
+  server together. App :3000, API :8787.
+
 ## Rewrite: index-first, stablecoin-denominated (2026-09-03)
 
 Re-centered the project so the index, the rebalancer, and the frontend are the

@@ -1,5 +1,8 @@
 {
+  "type": "module",
   "dependencies": {
-    "@openzeppelin/contracts": "^4.9.6"
+    "@flarenetwork/flare-periphery-contracts": "^0.1.51",
+    "@openzeppelin/contracts": "^4.9.6",
+    "ethers": "^6.17.0"
   }
 }

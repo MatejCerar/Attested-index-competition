@@ -10,7 +10,7 @@
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
          font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-  .wrap { max-width:1080px; margin:0 auto; padding:28px 20px 60px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:28px 20px 60px; }
   h1 { margin:0 0 4px; font-size:24px; }
   .sub { color:var(--mut); margin-bottom:18px; }
   .rev { background:linear-gradient(90deg,#12261a,#141924); border:1px solid #1c3a26;
@@ -31,7 +31,7 @@
   .rank { font-size:20px; font-weight:700; width:40px; }
   .r1 { color:var(--gold); } .r2 { color:#c9d1d9; } .r3 { color:#cd7f32; }
   .name { font-weight:600; }
-  .prompt { color:var(--mut); font-size:12px; margin-top:3px; max-width:300px; }
+  .prompt { color:var(--mut); font-size:12px; margin-top:3px; max-width:320px; }
   .pos { display:flex; gap:4px; margin-top:7px; flex-wrap:wrap; }
   .chip { font-size:11px; background:#1b2233; border:1px solid var(--line);
           border-radius:5px; padding:2px 6px; color:#aeb9c9; }
@@ -40,11 +40,9 @@
   .up { color:var(--grn); } .down { color:var(--red); }
   .badge { display:inline-block; font-size:11px; padding:2px 7px; border-radius:5px;
            background:#12261a; color:var(--grn); border:1px solid #1c3a26; }
-  .kind { font-size:10.5px; padding:1px 6px; border-radius:5px; border:1px solid var(--line);
-          margin-left:6px; vertical-align:middle; }
-  .k-rwa { background:#1f1a2e; color:#c9a9ff; border-color:#2e2444; }
-  .k-crypto { background:#101f2a; color:#79c0ff; border-color:#173040; }
-  .src { font-size:9.5px; opacity:.75; margin-left:3px; }
+  .strat { display:inline-block; font-size:11px; padding:2px 7px; border-radius:5px;
+           background:#161d2e; color:var(--acc); border:1px solid #22314d; }
+  .reason { color:var(--mut); font-size:11.5px; margin-top:4px; }
   .lnk { color:var(--acc); text-decoration:none; font-size:12px; }
   .lnk:hover { text-decoration:underline; }
   .foot { color:var(--mut); font-size:12px; margin-top:22px; }
@@ -52,21 +50,20 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Attested Index Competition</h1>
-  <div class="sub">Users build an index and deposit; the FCC rebalancer allocates their money to the index weights; the platform earns the fee.
-    <span style="float:right;font-size:14px"><a class="lnk" href="live.html">Live competition</a> &middot; <a class="lnk" href="build.html">Build an index &rarr;</a></span></div>
+  <h1>Index Competition</h1>
+  <div class="sub">Each index is a prompt plus weights and a rebalance strategy. Users deposit a USD stablecoin; the rebalancer allocates to the index weights on-chain; the leaderboard ranks them and the platform earns the fee.</div>
 
   <div class="rev">
-    <div class="lbl">Platform fees earned this run (real, on-chain)</div>
+    <div class="lbl">Platform fees earned this run</div>
     <div class="big" id="rev"></div>
     <div class="lbl" id="revsub"></div>
   </div>
 
   <div class="flow">
-    <span><b>1</b> AI prompt -> weights</span>
-    <span><b>2</b> user deposits + pays fee</span>
-    <span><b>3</b> FCC signs weights -> on-chain rebalance</span>
-    <span><b>4</b> scored on live FTSO</span>
+    <span><b>1</b> prompt -> weights (static or AI)</span>
+    <span><b>2</b> user deposits USD stable + pays fee</span>
+    <span><b>3</b> strategy fires -> on-chain rebalance</span>
+    <span><b>4</b> NAV scored in USD</span>
     <span><b>5</b> leaderboard -> attracts deposits</span>
   </div>
 
@@ -74,9 +71,9 @@
 
   <table>
     <thead>
-      <tr><th>#</th><th>Index / recipe</th><th>On-chain holdings</th>
-          <th class="num">AUM</th><th class="num">7d (sim)</th>
-          <th>Fee paid</th><th>Rebalance tx</th></tr>
+      <tr><th>#</th><th>Index / recipe</th><th>Holdings</th>
+          <th>Strategy</th><th class="num">NAV</th><th class="num">7d (sim)</th>
+          <th>Rebalance</th></tr>
     </thead>
     <tbody id="rows"></tbody>
   </table>
@@ -90,52 +87,48 @@
   const pct = x => (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%";
   const short = h => h ? h.slice(0, 10) + "…" : "";
   const usd = x => "$" + x.toLocaleString(undefined, {maximumFractionDigits: 2});
+  const isZero = h => !h || /^0x0+$/.test(h);
 
-  document.getElementById("rev").textContent = d.platformRevenueFlr + " C2FLR";
+  document.getElementById("rev").textContent = usd(d.platformRevenueUsd) + " mUSDC";
   document.getElementById("revsub").innerHTML =
-    `${d.feeBps/100}% fee on each deposit, ${d.preview ? "projected across" : "paid to platform"} ` +
-    (d.preview ? `${d.baskets.length} indices (set PK to collect on-chain)`
-               : `<a class="lnk" href="${EXP}/address/${d.platform}" target="_blank">${short(d.platform)}</a>`);
+    `${d.feeBps / 100}% fee on each deposit, paid to platform ` +
+    `<a class="lnk" href="${EXP}/address/${d.platform}" target="_blank">${short(d.platform)}</a>`;
 
   document.getElementById("meta").innerHTML = [
     `Network: <b style="color:#e6edf3">${d.network}</b>`,
-    `Registry: <a href="${EXP}/address/${d.registry}" target="_blank">${short(d.registry)}</a>`,
+    `Stablecoin: ${short(d.stable)}`,
     `Rebalancer: ${d.attestedBy}`,
     `Generated: ${new Date(d.generatedAt).toLocaleString()}`,
-  ].join("");
+    d.sample ? `<b style="color:#e3b341">sample data - run the orchestrator for live tx</b>` : "",
+  ].filter(Boolean).join("");
 
-  const srcTag = s => s ? `<span class="src">${s.toUpperCase()}</span>` : "";
-  document.getElementById("rows").innerHTML = d.baskets.map(b => {
+  document.getElementById("rows").innerHTML = d.indices.map(b => {
     const rc = b.rank <= 3 ? "r" + b.rank : "";
-    const kind = `<span class="kind k-${b.kind || "crypto"}">${(b.kind || "crypto") === "rwa" ? "RWA" : "crypto"}</span>`;
+    const nav = b.positions.reduce((a, p) => a + p.units * p.basePx, 0);
     const pos = b.positions.map(p =>
-      `<span class="chip">${p.sym} ${p.weight}%${srcTag(p.source)} · ${p.units.toFixed(4)}u</span>`).join("");
-    const reb = b.rebalanceTx
-      ? `<span class="badge">rebalanced</span><br>` +
-        `<a class="lnk" href="${EXP}/tx/${b.rebalanceTx}" target="_blank">${short(b.rebalanceTx)}</a><br>` +
-        `<a class="lnk" href="${EXP}/address/${b.vault}" target="_blank">vault ${short(b.vault)}</a>`
-      : `<span class="badge" style="background:#1b2233;color:#9db2d6;border-color:#232a38">preview</span>`;
-    const feeCell = b.feeTx
-      ? `${b.feeFlr} C2FLR<br><a class="lnk" href="${EXP}/tx/${b.feeTx}" target="_blank">${short(b.feeTx)}</a>`
-      : `${b.feeFlr} C2FLR`;
+      `<span class="chip">${p.sym} ${p.weight}% · ${p.units.toFixed(4)}u</span>`).join("");
+    const rebLink = isZero(b.rebalanceTx)
+      ? `<span class="reason">no tx (sample)</span>`
+      : `<a class="lnk" href="${EXP}/tx/${b.rebalanceTx}" target="_blank">${short(b.rebalanceTx)}</a><br>` +
+        `<a class="lnk" href="${EXP}/address/${b.vault}" target="_blank">vault ${short(b.vault)}</a>`;
+    const reb = `<span class="badge">rebalanced</span><br>${rebLink}` +
+      `<div class="reason">${b.rebalanceReason || ""}</div>`;
     return `<tr>
       <td class="rank ${rc}">${b.rank}</td>
-      <td><div class="name">${b.name}${kind}</div><div class="prompt">"${b.prompt}"</div></td>
+      <td><div class="name">${b.name}</div><div class="prompt">"${b.prompt}"</div></td>
       <td><div class="pos">${pos}</div></td>
-      <td class="num">${b.aumFlr} C2FLR<br><span style="color:var(--mut);font-size:12px">${usd(b.aumUsd)}</span></td>
+      <td><span class="strat">${b.strategyName || b.strategy}</span></td>
+      <td class="num">${usd(nav)}</td>
       <td class="num ret ${b.weekReturn >= 0 ? "up" : "down"}">${pct(b.weekReturn)}</td>
-      <td>${feeCell}</td>
       <td>${reb}</td>
     </tr>`;
   }).join("");
 
-  document.getElementById("foot").innerHTML = d.preview
-    ? `Preview: prices resolved (FTSO where available, else the CSV snapshot from the RWA catalog), ` +
-      `holdings and 7-day P&L computed off-chain. Set PK and run the FCC tee-node to deploy vaults and ` +
-      `sign real on-chain rebalances.`
-    : `Deposits, fee payments and rebalances are real on Coston2: each vault's holdings are moved on-chain ` +
-      `by a rebalance the FCC tee-node signed (${short(d.rebalancer)}). Prices are FTSO where available, else ` +
-      `the CSV snapshot (${short(d.ftso)}). Only the 7-day P&L path is simulated for the demo.`;
+  document.getElementById("foot").innerHTML =
+    `Deposits, fee payments and rebalances are real on Coston2 when run live: each vault's holdings ` +
+    `are moved on-chain by a rebalance the FCC tee-node signed (${short(d.rebalancer)}). ` +
+    `Prices are a deterministic stub source (Uniswap V3 TWAP is the phase-2 seam). ` +
+    `Only the 7-day P&L path is simulated.`;
 </script>
 </body>
 </html>

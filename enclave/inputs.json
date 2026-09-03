@@ -1,0 +1,16 @@
+{
+  "seriesName": "PF-AI-COMPUTE",
+  "manifest": {
+    "series": "PF-AI-COMPUTE",
+    "model": "Qwen/Qwen3.8-27B-FP8@017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+    "runtime": "sglang-deterministic",
+    "hardware": "H200",
+    "seed": 438916795,
+    "methodology": "20-80-blend-v1"
+  },
+  "producedAt": 1756600000,
+  "rows": [
+    {"cik": 2488, "score": 88, "weightPpm": 412000},
+    {"cik": 1045810, "score": 95, "weightPpm": 588000}
+  ]
+}

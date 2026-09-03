@@ -7,3 +7,7 @@ cache/
 
 # large raw source; catalog.js/json are the committed, derived universe
 rwa-database.txt
+
+# live competition output (regenerated each run)
+demo/frontend/live.js
+broadcast/

@@ -1,0 +1,71 @@
+# Real run: two Flare tee-node containers (each holds its own key inside the
+# TEE) + two enclave nodes as loopback sidecars. Each enclave reaches its
+# tee-node's /sign at 127.0.0.1:7701 via a shared network namespace, gets a
+# real tee-node signature, and commits to the live registry on Coston2. The
+# contract finalizes only when both agree byte-for-byte.
+#
+# Independent of AVV: own project name, own images, own registry.
+# Required env: REGISTRY, MEASUREMENT, EPOCH, GAS_A_KEY, GAS_B_KEY, RPC_URL.
+name: are-real-tee
+
+services:
+  tee-a:
+    image: are/real-tee-node:v0.0.24
+    environment:
+      MODE: "1"
+      SIMULATED_TEE: "true"
+      CHAIN_ID: "114"
+      INITIAL_OWNER: "0x4AD9F5F107c54264A5d107dEb10f768a9d27b8b7"
+      GOVERNANCE_SIGNERS: "0x4AD9F5F107c54264A5d107dEb10f768a9d27b8b7"
+      GOVERNANCE_THRESHOLD: "1"
+      PROXY_URL: "http://127.0.0.1:1"
+      CONFIG_PORT: "5501"
+      SIGN_PORT: "7701"
+      EXTENSION_PORT: "7702"
+    restart: unless-stopped
+
+  tee-b:
+    image: are/real-tee-node:v0.0.24
+    environment:
+      MODE: "1"
+      SIMULATED_TEE: "true"
+      CHAIN_ID: "114"
+      INITIAL_OWNER: "0x4AD9F5F107c54264A5d107dEb10f768a9d27b8b7"
+      GOVERNANCE_SIGNERS: "0x4AD9F5F107c54264A5d107dEb10f768a9d27b8b7"
+      GOVERNANCE_THRESHOLD: "1"
+      PROXY_URL: "http://127.0.0.1:1"
+      CONFIG_PORT: "5501"
+      SIGN_PORT: "7701"
+      EXTENSION_PORT: "7702"
+    restart: unless-stopped
+
+  enclave-a:
+    build: .
+    image: are/enclave-real:latest
+    network_mode: "service:tee-a"
+    environment:
+      NODE_NAME: "enclave-a"
+      RPC_URL: "${RPC_URL:-https://coston2-api.flare.network/ext/C/rpc}"
+      REGISTRY: "${REGISTRY}"
+      MEASUREMENT: "${MEASUREMENT}"
+      EPOCH: "${EPOCH:-5}"
+      TEE_SIGN_URL: "http://127.0.0.1:7701/sign"
+      GAS_KEY: "${GAS_A_KEY}"
+    depends_on:
+      - tee-a
+    restart: "no"
+
+  enclave-b:
+    image: are/enclave-real:latest
+    network_mode: "service:tee-b"
+    environment:
+      NODE_NAME: "enclave-b"
+      RPC_URL: "${RPC_URL:-https://coston2-api.flare.network/ext/C/rpc}"
+      REGISTRY: "${REGISTRY}"
+      MEASUREMENT: "${MEASUREMENT}"
+      EPOCH: "${EPOCH:-5}"
+      TEE_SIGN_URL: "http://127.0.0.1:7701/sign"
+      GAS_KEY: "${GAS_B_KEY}"
+    depends_on:
+      - tee-b
+    restart: "no"

@@ -47,6 +47,18 @@ const STRATEGY_SELECT_DATA = (["intervals", "harnesses", "combined"] as Strategy
   })
 );
 
+// Starter prompts for the "Generate from prompt" box (RWA universe).
+const PROMPT_TEMPLATES = [
+  "Bloomberg top 5 US tech stocks",
+  "Magnificent 7 tokenized equities",
+  "AI and semiconductor leaders",
+  "Gold-heavy precious metals hedge",
+  "Wall Street money-center banks",
+  "Broad-market ETF core: S&P, Nasdaq, small-cap",
+  "Tokenized big pharma",
+  "High-dividend blue chips",
+];
+
 export function BuildPage() {
   const {data: catalog, isLoading} = useCatalog();
   const {connected, deposit, mint} = useWallet();
@@ -237,6 +249,22 @@ export function BuildPage() {
           <Button loading={generating} onClick={runGenerate} disabled={!genPrompt.trim()}>
             Generate
           </Button>
+        </Group>
+        <Group gap={6} mt="xs">
+          <Text size="note" c="dimmed">
+            Try:
+          </Text>
+          {PROMPT_TEMPLATES.map((t) => (
+            <Badge
+              key={t}
+              variant="light"
+              color="gray"
+              style={{cursor: "pointer"}}
+              onClick={() => setGenPrompt(t)}
+            >
+              {t}
+            </Badge>
+          ))}
         </Group>
         <Text size="note" c="dimmed" mt={6}>
           Produces a whole index (name, thesis, assets, weights, strategy) chosen

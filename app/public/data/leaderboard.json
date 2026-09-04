@@ -7,52 +7,6 @@
   "attestedBy": "off-chain live competition (no chain)",
   "indices": [
     {
-      "id": "matej-1",
-      "name": "Matej 1",
-      "prompt": "Matej 1",
-      "owner": "you",
-      "mine": true,
-      "weights": {
-        "SK hynix Inc.": 53,
-        "Crude Oil (WTI)": 29,
-        "Nasdaq-100 Index": 18
-      },
-      "strategy": "five-minute-or-drift-2",
-      "strategyName": "Five minute or 2% drift",
-      "rebalanceReason": "interval elapsed",
-      "vault": "0xef749278eba072799ef64d57b7126ee496262c56",
-      "rebalanceTx": "0xd183edb2af8bc91cd5710afad951e8d5c0462ad87969af54d0c34aae85f5b57d",
-      "txSample": true,
-      "positions": [
-        {
-          "sym": "SK hynix Inc.",
-          "weight": 53,
-          "units": 44.6850638445787,
-          "basePx": 1207.5,
-          "drift": 0.010206844572464568,
-          "source": "yahoo"
-        },
-        {
-          "sym": "Crude Oil (WTI)",
-          "weight": 29,
-          "units": 323.935784021708,
-          "basePx": 85.99,
-          "drift": 0.06925494731418724,
-          "source": "yahoo"
-        },
-        {
-          "sym": "Nasdaq-100 Index",
-          "weight": 18,
-          "units": 0.6212154012810726,
-          "basePx": 29362,
-          "drift": 0.008778848751203272,
-          "source": "yahoo"
-        }
-      ],
-      "weekReturn": 0.02692552533235837,
-      "rank": 1
-    },
-    {
       "id": "precious-metals",
       "name": "Precious Metals",
       "prompt": "Tokenized precious metals as an inflation hedge: gold-heavy with silver, platinum, palladium.",
@@ -100,7 +54,7 @@
         }
       ],
       "weekReturn": 0.0043710129532377184,
-      "rank": 2
+      "rank": 1
     },
     {
       "id": "mag-7-rwa",
@@ -159,7 +113,7 @@
         }
       ],
       "weekReturn": 0,
-      "rank": 3
+      "rank": 2
     },
     {
       "id": "ai-semiconductors",
@@ -227,7 +181,7 @@
         }
       ],
       "weekReturn": 0,
-      "rank": 4
+      "rank": 3
     },
     {
       "id": "wall-street-financials",
@@ -277,7 +231,7 @@
         }
       ],
       "weekReturn": 0,
-      "rank": 5
+      "rank": 4
     },
     {
       "id": "tokenized-index-funds",
@@ -318,7 +272,7 @@
         }
       ],
       "weekReturn": 0,
-      "rank": 6
+      "rank": 5
     }
   ]
 }

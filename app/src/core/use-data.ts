@@ -2,17 +2,22 @@ import {useQuery} from "@tanstack/react-query";
 import type {Catalog, LeaderboardData, LiveData} from "@/core/types.ts";
 
 const base = import.meta.env.BASE_URL;
+// When VITE_API_URL is set (hosted: FE on Cloudflare Pages, backend behind a
+// tunnel) the board is read from the API. Otherwise the static files under
+// public/data are used (local dev, or a self-contained static build).
+const API = import.meta.env.VITE_API_URL as string | undefined;
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const r = await fetch(`${base}data/${path}`);
-  if (!r.ok) throw new Error(`failed to load ${path}: ${r.status}`);
+async function fetchData<T>(name: "catalog" | "leaderboard" | "live"): Promise<T> {
+  const url = API ? `${API}/${name}` : `${base}data/${name}.json`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`failed to load ${name}: ${r.status}`);
   return r.json();
 }
 
 export function useCatalog() {
   return useQuery({
     queryKey: ["catalog"],
-    queryFn: () => fetchJson<Catalog>("catalog.json"),
+    queryFn: () => fetchData<Catalog>("catalog"),
     staleTime: Infinity,
   });
 }
@@ -20,7 +25,7 @@ export function useCatalog() {
 export function useLeaderboard() {
   return useQuery({
     queryKey: ["leaderboard"],
-    queryFn: () => fetchJson<LeaderboardData>("leaderboard.json"),
+    queryFn: () => fetchData<LeaderboardData>("leaderboard"),
     refetchInterval: 30_000,
   });
 }
@@ -30,7 +35,7 @@ export function useLeaderboard() {
 export function useLive() {
   return useQuery({
     queryKey: ["live"],
-    queryFn: () => fetchJson<LiveData>("live.json"),
+    queryFn: () => fetchData<LiveData>("live"),
     refetchInterval: 5_000,
   });
 }

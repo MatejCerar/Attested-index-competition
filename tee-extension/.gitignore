@@ -1,0 +1,9 @@
+# Never commit the FILLED TEE configs (they carry secrets: keys + indexer DB
+# creds). Only the .example templates in env/ are tracked. This repo may sync to
+# Drive, so filled secrets must not land here.
+.env.coston2
+.env
+env/.env.coston2
+env/extension_proxy.coston2.docker.toml
+extension_proxy.coston2.docker.toml
+*.key

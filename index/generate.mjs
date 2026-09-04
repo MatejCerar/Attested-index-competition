@@ -5,20 +5,30 @@
 // knowledge instead of trying to fetch. On any failure it falls back to the
 // index's last-good weights and logs that live-gen is unavailable.
 import {spawn} from "node:child_process";
-import {ASSETS} from "./assets.mjs";
 import {INDICES} from "./indices.mjs";
-import {normalizeWeights} from "./weights.mjs";
+import {STRATEGIES} from "./strategies.mjs";
+import {candidatesForPrompt, assetIndex} from "./catalog.mjs";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const DISALLOWED = ["WebFetch", "WebSearch", "Bash"];
+const STRATEGY_IDS = Object.keys(STRATEGIES);
+const DEFAULT_STRATEGY = STRATEGY_IDS.includes("hourly-or-drift")
+    ? "hourly-or-drift"
+    : STRATEGY_IDS[0];
 
-function buildPrompt(indexPrompt) {
-    return (
-        `${indexPrompt} Based only on your own knowledge, return ONLY compact ` +
-        `JSON {"weights":{SYM:pct,...}} with pct integers summing to 100 over ` +
-        `exactly these allowed assets: [${ASSETS.join(",")}]. No prose.`
-    );
-}
+// A safe default RWA index if generation fails entirely. Two large tokenized
+// equities from the catalog; no crypto anywhere on the board.
+const FALLBACK_INDEX = {
+    name: "Big-Tech RWA (default)",
+    rationale: "Default basket: two large tokenized US tech equities. Live generation was unavailable.",
+    assets: ["NVDAx::backed-assets-je-limited", "AAPLx::backed-assets-je-limited"],
+    weights: {
+        "NVDAx::backed-assets-je-limited": 60,
+        "AAPLx::backed-assets-je-limited": 40,
+    },
+    strategy: DEFAULT_STRATEGY,
+    source: "fallback",
+};
 
 // Pull the first {...} JSON object out of possibly-fenced model output.
 function extractJson(text) {
@@ -68,9 +78,11 @@ function runClaude(prompt, timeoutMs) {
     });
 }
 
-// Generate fresh weights for one index. Never throws.
-export async function generateWeights(index, {timeoutMs = 45000} = {}) {
-    const res = await runClaude(buildPrompt(index.prompt), timeoutMs);
+// Generate fresh weights for one index from its prompt, restricted to the RWA
+// catalog. Never throws; falls back to the index's last-good weights.
+export async function generateWeights(index, {timeoutMs = 45000, limit = 60} = {}) {
+    const cands = candidatesForPrompt(index.prompt, {limit});
+    const res = await runClaude(buildIndexPrompt(index.prompt, cands), timeoutMs);
     if (!res.ok) {
         console.error(
             `[gen] ${index.id}: live-gen unavailable (${res.err}), using fallback`
@@ -78,14 +90,124 @@ export async function generateWeights(index, {timeoutMs = 45000} = {}) {
         return {weights: index.weights, source: "fallback"};
     }
     const parsed = extractJson(res.out);
-    const norm = parsed && normalizeWeights(parsed.weights, ASSETS);
-    if (!norm) {
+    const idx = parsed && validateIndex(parsed, cands);
+    if (!idx) {
         console.error(
             `[gen] ${index.id}: unparseable/empty weights, using fallback`
         );
         return {weights: index.weights, source: "fallback", raw: res.out.trim()};
     }
-    return {weights: norm, source: "live", raw: res.out.trim()};
+    return {weights: idx.weights, source: "live", raw: res.out.trim()};
+}
+
+// Build the compact candidate table string the model picks tickers from. Each
+// row is `TICKER  name (class)` so the model has just enough to choose. Rows are
+// RWA-only: the tokenized ticker.
+function candidateTable(cands) {
+    return cands
+        .map((a) => {
+            const px = a.priceUsd != null ? ` ~$${a.priceUsd}` : "";
+            return `${a.ticker} - ${a.name} (${a.assetClass})${px}`;
+        })
+        .join("\n");
+}
+
+function buildIndexPrompt(prompt, cands) {
+    return (
+        `You are designing a tradable index from a fixed asset universe.\n` +
+        `User request: ${prompt}\n\n` +
+        `Pick assets ONLY from this candidate list (use the exact TICKER shown, ` +
+        `left of the dash):\n${candidateTable(cands)}\n\n` +
+        `Choose 2 to 8 tickers that best fit the request. Return ONLY compact ` +
+        `JSON, no prose, of the form ` +
+        `{"name":"...","rationale":"...","assets":["T1","T2"],` +
+        `"weights":{"T1":pct,"T2":pct},"strategy":"id"} where pct are integers ` +
+        `summing to 100 over exactly the chosen assets, "strategy" is one of ` +
+        `[${STRATEGY_IDS.join(",")}], name is short, rationale is one sentence.`
+    );
+}
+
+// Resolve a model-returned ticker to a catalog id, restricted to the candidate
+// set. Case-insensitive on ticker; prefers an exact match.
+function resolveTicker(ticker, cands) {
+    const t = String(ticker).trim().toLowerCase();
+    const hits = cands.filter((a) => a.ticker.toLowerCase() === t);
+    if (hits.length) return hits[0].id;
+    // loose: startsWith, so "AAPL" matches "AAPLx" if the model dropped the affix
+    const loose = cands.filter(
+        (a) => a.ticker.toLowerCase().startsWith(t) || t.startsWith(a.ticker.toLowerCase())
+    );
+    return loose.length ? loose[0].id : null;
+}
+
+// Renormalize a {id: rawPct} map to integers summing to 100, remainder on the
+// largest. Works with arbitrary id strings (unlike normalizeWeights).
+function renormalizeIds(idWeights, idOrder) {
+    const total = idOrder.reduce((a, id) => a + idWeights[id], 0);
+    if (total <= 0) return null;
+    const out = {};
+    for (const id of idOrder) out[id] = Math.round((idWeights[id] / total) * 100);
+    for (const id of Object.keys(out)) if (out[id] <= 0) delete out[id];
+    const ids = Object.keys(out);
+    if (ids.length === 0) return null;
+    let sum = ids.reduce((a, id) => a + out[id], 0);
+    if (sum !== 100) {
+        const largest = ids.reduce((a, id) => (out[id] > out[a] ? id : a), ids[0]);
+        out[largest] += 100 - sum;
+        if (out[largest] <= 0) delete out[largest];
+    }
+    return Object.keys(out).length ? out : null;
+}
+
+// Validate + normalize a parsed model object into a full index. Drops unknown
+// tickers, renormalizes weights to sum 100 over the survivors, coerces the
+// strategy, and returns null if nothing valid survives.
+export function validateIndex(parsed, cands, byId = assetIndex()) {
+    if (!parsed || typeof parsed !== "object") return null;
+    const rawWeights = parsed.weights || {};
+    // Map ticker -> id, summing duplicates.
+    const idWeights = {};
+    const idOrder = [];
+    for (const [ticker, w] of Object.entries(rawWeights)) {
+        const n = Number(w);
+        if (!Number.isFinite(n) || n <= 0) continue;
+        const id = resolveTicker(ticker, cands);
+        if (!id || !byId.has(id)) continue;
+        if (!(id in idWeights)) idOrder.push(id);
+        idWeights[id] = (idWeights[id] || 0) + n;
+    }
+    if (idOrder.length === 0) return null;
+    // Renormalize to integer pct summing to 100 over the resolved ids. (The
+    // shared normalizeWeights uppercases symbols, which would break `::issuer`
+    // ids, so we renormalize ids directly here.)
+    const norm = renormalizeIds(idWeights, idOrder);
+    if (!norm) return null;
+    const assets = Object.keys(norm);
+    const strategy = STRATEGY_IDS.includes(parsed.strategy)
+        ? parsed.strategy
+        : DEFAULT_STRATEGY;
+    const name = String(parsed.name || "").trim().slice(0, 60) || "Untitled Index";
+    const rationale = String(parsed.rationale || "").trim().slice(0, 240);
+    return {name, rationale, assets, weights: norm, strategy};
+}
+
+// Prompt -> a whole index object {name, rationale, assets, weights, strategy}.
+// assets/weights use catalog ids; tickers are validated against the candidate
+// shortlist. Never throws: on any failure returns FALLBACK_INDEX.
+export async function generateIndex(prompt, {timeoutMs = 45000, limit = 60} = {}) {
+    const cands = candidatesForPrompt(prompt, {limit});
+    const res = await runClaude(buildIndexPrompt(prompt, cands), timeoutMs);
+    if (!res.ok) {
+        console.error(`[gen] index: live-gen unavailable (${res.err}), using fallback`);
+        return {...FALLBACK_INDEX};
+    }
+    const parsed = extractJson(res.out);
+    const idx = parsed && validateIndex(parsed, cands);
+    if (!idx) {
+        console.error(`[gen] index: unparseable/empty, using fallback`);
+        return {...FALLBACK_INDEX, raw: res.out.trim()};
+    }
+    return {...idx, source: "live", raw: res.out.trim()};
 }
 
 // Refresh loop: regenerate every intervalMs, one index at a time (no parallel
@@ -121,6 +243,16 @@ export function refreshLoop(
 
 // CLI: one pass over INDICES; with --loop, run the refresh loop.
 async function main() {
+    // Whole-index generation from a single prompt: --index "your prompt"
+    const ixArg = process.argv.indexOf("--index");
+    if (ixArg >= 0) {
+        const prompt = process.argv.slice(ixArg + 1).join(" ").trim() ||
+            "A balanced basket of the largest tokenized US tech equities.";
+        const idx = await generateIndex(prompt);
+        console.log(JSON.stringify(idx, (k, v) => (k === "raw" ? undefined : v), 2));
+        return;
+    }
+
     const loop = process.argv.includes("--loop");
     const intervalMs = Number(process.env.INTERVAL_MS ?? 60000);
     if (loop) {

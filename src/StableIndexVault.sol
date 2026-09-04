@@ -5,7 +5,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     IERC20Metadata
 } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {
+    SafeERC20
+} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 /// A stablecoin-denominated index vault. Deposits are pulled in a USD stable
@@ -69,9 +71,8 @@ contract StableIndexVault {
         bytes calldata sig
     ) external {
         if (weightsBps.length != n || pricesE18.length != n) revert BadLen();
-        bytes32 h = keccak256(
-            abi.encode(address(this), nonce, weightsBps, pricesE18)
-        );
+        bytes32 h =
+            keccak256(abi.encode(address(this), nonce, weightsBps, pricesE18));
         if (ECDSA.recover(ECDSA.toEthSignedMessageHash(h), sig) != rebalancer) {
             revert BadSig();
         }

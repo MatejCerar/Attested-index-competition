@@ -9,7 +9,7 @@ import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
 import {AbiCoder, JsonRpcProvider, Wallet, Contract} from "ethers";
 import {INDICES, strategyFor} from "../index/indices.mjs";
-import {createStubPriceSource} from "../index/prices.mjs";
+import {createStubPriceSource, createUniswapPriceSource} from "../index/prices.mjs";
 import {weightsToBps} from "../index/weights.mjs";
 import {teeSign} from "../enclave/teesign.mjs";
 
@@ -20,6 +20,24 @@ const RPC = process.env.RPC ?? "https://coston2-api.flare.network/ext/C/rpc";
 const TEE_SIGN_URL = process.env.TEE_SIGN_URL ?? "http://127.0.0.1:7701/sign";
 const PK = process.env.PK;
 const DRY = process.env.DRY === "1" || !PK;
+// Optional Uniswap V3 pool pricing: POOLS=<path to {SYM: poolAddr}>. When set,
+// prices come from the pools (with the stub as the no-pool fallback), matching
+// how a mainnet deploy prices on real DEX pools with no code change.
+const POOLS = process.env.POOLS;
+
+// The active price source: Uniswap pools if POOLS is set, else the stub.
+function priceSource(provider, Contract) {
+    if (POOLS && provider && Contract) {
+        const pools = JSON.parse(readFileSync(POOLS, "utf8"));
+        return createUniswapPriceSource({
+            provider,
+            pools,
+            fallbackSource: createStubPriceSource(),
+            Contract,
+        });
+    }
+    return createStubPriceSource();
+}
 
 // bps map -> current weights from holdings * price. holdings: {SYM: units1e18}.
 function currentWeightsBps(symbols, holdings, prices) {
@@ -167,11 +185,11 @@ async function runLive() {
     if (!vaultsPath) throw new Error("LIVE mode needs VAULTS=<path to {id:addr}>");
     const vaults = JSON.parse(readFileSync(vaultsPath, "utf8"));
     const art = JSON.parse(
-        readFileSync(join(__dirname, "..", "demo", "abi", "StableIndexVault.json"), "utf8")
+        readFileSync(join(__dirname, "..", "scripts", "abi", "StableIndexVault.json"), "utf8")
     );
     const provider = new JsonRpcProvider(RPC);
     const signer = new Wallet(PK, provider);
-    const src = createStubPriceSource();
+    const src = priceSource(provider, Contract);
     const prices = await src.getPrices();
 
     for (const index of INDICES) {

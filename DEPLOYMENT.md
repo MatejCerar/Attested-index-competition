@@ -2,6 +2,31 @@
 
 Every address and tx below is on-chain, not a local sim.
 
+## Index Competition RWA vaults, tee-signed rebalance (2026-09-03)
+
+Five RWA index vaults (aligned with the live-engine field), deployed by
+`0x4AD9F5F107c54264A5d107dEb10f768a9d27b8b7` and rebalanced via the real Flare
+tee-node v0.0.24 (MODE=1 simulated attestation). FCC rebalancer (tee) signer:
+`0x8FFf2C049eDe07D33716d312d53D3FF03a65BD65` (== each vault's `rebalancer`).
+
+| Contract | Address |
+|---|---|
+| MockUSDC | `0x800422CD55549fd71bA3C3A283cBB287836aAe54` |
+| StableIndexVault mag-7-rwa | `0x89267d063D079058811569fA311ed4320885996c` |
+| StableIndexVault ai-semiconductors | `0x9F5Dc89de4C3a52760fE850F262AdB4f8DDfbbf6` |
+| StableIndexVault wall-street-financials | `0xa08667be287258CFC11f2BE4cE3166F5e6a3f7CD` |
+| StableIndexVault precious-metals | `0x7ED06545011c789D162D0ae2C5f667f27004bdC3` |
+| StableIndexVault tokenized-index-funds | `0xC55C87c327438eEd0778EE4e27Ee83A47E7513a9` |
+
+Full pool map (21 pools) in `app/public/data/compete-onchain.json`. Each vault
+holds 1000 mUSDC. Real tee-signed `rebalance()` txs (status SUCCESS, holdings
+moved):
+- mag-7-rwa: `0xead0b309340590881850254da16f2c584e5553b325cf3562c5961b744300cba9` (block 34836800)
+- ai-semiconductors: `0xe17da598de36bdf76704e615b0582b6933dd0dfb3d7d14bb9300deae1dc5b527` (block 34836802)
+- wall-street-financials: `0x3ba483c4344e1df07f9d5871bc1e633008bc600e52bb6b6f426c92cd8e252b84` (block 34836805)
+- precious-metals: `0x2e1ca2fa5f6eebfac181ada713d49086226381ec645c57761875c8fe6b52adee` (block 34836807)
+- tokenized-index-funds: rebalances on-chain once its drift-5 band is breached (pure drift strategy, no trigger at t0).
+
 ## Contracts
 
 | Contract | Address |

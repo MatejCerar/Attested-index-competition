@@ -56,6 +56,8 @@ export interface LeaderboardIndex {
   rebalanceTx?: string;
   txSample?: boolean; // rebalanceTx is a resolvable reference, not this basket's
   positions: LeaderboardPosition[];
+  nav?: number; // real NAV (on-chain vault value), matches the Live board
+  tvl?: number | null;
   weekReturn: number;
   rank: number;
 }

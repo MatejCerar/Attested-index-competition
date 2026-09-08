@@ -120,7 +120,10 @@ export function LeaderboardPage() {
 }
 
 function Row({idx}: {idx: LeaderboardIndex}) {
-  const nav = idx.positions.reduce((a, p) => a + p.units * p.basePx, 0);
+  // Prefer the real NAV the engine writes (same as the Live board); fall back to
+  // the position-derived value only for older data without a nav field.
+  const nav =
+    idx.nav ?? idx.positions.reduce((a, p) => a + p.units * p.basePx, 0);
   return (
     <Table.Tr>
       <Table.Td>

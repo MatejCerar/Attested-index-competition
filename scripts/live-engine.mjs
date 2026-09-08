@@ -630,6 +630,8 @@ function writeLeaderboard(scored, px) {
                 drift: px[l.symbol] > 0 && b.p0[l.symbol] > 0 ? px[l.symbol] / b.p0[l.symbol] - 1 : 0,
                 source: l.src,
             })),
+            nav: r.nav, // real NAV (on-chain vault value), same as the Live board
+            tvl: r.tvl ?? undefined,
             weekReturn: r.ret,
             rank: r.rank,
         };

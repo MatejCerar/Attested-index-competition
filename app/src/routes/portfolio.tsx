@@ -18,8 +18,8 @@ import {useLive} from "@/core/use-data.ts";
 import {useOnchain} from "@/core/use-onchain.ts";
 import {useWallet} from "@/core/wallet-context.tsx";
 
-const usd = (x: number) =>
-  `$${x.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+const usd = (x?: number | null) =>
+  x == null ? "-" : `$${x.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`;
 
 export function PortfolioPage() {

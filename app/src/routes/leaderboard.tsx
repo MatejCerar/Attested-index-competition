@@ -21,8 +21,8 @@ const EXP = "https://coston2-explorer.flare.network";
 const SAMPLE_TX =
   "0xead0b309340590881850254da16f2c584e5553b325cf3562c5961b744300cba9";
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`;
-const usd = (x: number) =>
-  `$${x.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+const usd = (x?: number | null) =>
+  x == null ? "-" : `$${x.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
 const short = (h?: string) => (h ? `${h.slice(0, 10)}...` : "");
 const isZero = (h?: string) => !h || /^0x0+$/.test(h);
 
@@ -30,8 +30,15 @@ export function LeaderboardPage() {
   const {data, isLoading, error} = useLeaderboard();
 
   if (isLoading) return <Loader />;
-  if (error || !data)
-    return <Alert color="red">Could not load leaderboard data.</Alert>;
+  // Empty indices == the engine has not written leaderboard.json yet (fresh
+  // start / after a wipe); show a warming-up state instead of a broken page.
+  if (error || !data || !data.indices?.length)
+    return (
+      <Alert color="yellow">
+        Warming up - standings appear within a few seconds of the engine
+        starting.
+      </Alert>
+    );
 
   const rows = [...data.indices].sort((a, b) => a.rank - b.rank);
 

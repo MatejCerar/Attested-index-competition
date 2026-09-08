@@ -39,7 +39,8 @@ import {useLive} from "@/core/use-data.ts";
 import type {LiveData, LiveIndex} from "@/core/types.ts";
 
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`;
-const usd = (x: number) => `$${x.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
+const usd = (x?: number | null) =>
+  x == null ? "-" : `$${x.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
 const EXP = "https://coston2-explorer.flare.network";
 const short = (h?: string | null) => (h ? `${h.slice(0, 10)}...` : "");
 const isZero = (h?: string | null) => !h || /^0x0+$/.test(h);
@@ -93,13 +94,15 @@ export function LivePage() {
   };
 
   if (isLoading) return <Loader />;
-  if (error || !data)
+  // `!data.startedAt` also catches the empty {indices: []} the API returns when
+  // live.json has not been written yet (fresh start / after a wipe).
+  if (error || !data || !data.startedAt)
     return (
       <Alert color="yellow">
-        No live data yet. Run <code>npm run compete</code> (or{" "}
-        <code>node scripts/live-engine.mjs</code>), which writes
-        <code> app/public/data/live.json</code> every tick; the board refreshes
-        every 5s.
+        Warming up - the live board appears within a few seconds of the engine
+        starting. If it persists, make sure <code>npm run compete</code> (or{" "}
+        <code>node scripts/live-engine.mjs</code>) is running; it writes
+        <code> app/public/data/live.json</code> every tick.
       </Alert>
     );
 

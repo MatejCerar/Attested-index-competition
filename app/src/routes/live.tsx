@@ -23,6 +23,7 @@ import {
   redeemOnChain,
   type VaultPosition,
 } from "@/core/evm-seam.ts";
+import {clearCostBasis, recordDeposit} from "@/core/cost-basis.ts";
 import {useOnchain} from "@/core/use-onchain.ts";
 import {useWallet} from "@/core/wallet-context.tsx";
 import {
@@ -346,7 +347,10 @@ function VaultActions({vault, invest}: {vault: string; invest: InvestCtx}) {
             : `1000 mUSDC deposited into this index's vault. tx ${res.txHash?.slice(0, 10)}...`
           : String(res.error),
       });
-      if (res.ok) refresh();
+      if (res.ok) {
+        if (!res.mocked) recordDeposit(vault, 1000);
+        refresh();
+      }
     } finally {
       setBusy("");
     }
@@ -365,7 +369,10 @@ function VaultActions({vault, invest}: {vault: string; invest: InvestCtx}) {
             : `Redeemed to mUSDC. tx ${res.txHash?.slice(0, 10)}...`
           : String(res.error),
       });
-      if (res.ok) refresh();
+      if (res.ok) {
+        if (!res.mocked) clearCostBasis(vault);
+        refresh();
+      }
     } finally {
       setBusy("");
     }

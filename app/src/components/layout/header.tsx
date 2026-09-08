@@ -9,6 +9,7 @@ const NAV = [
   {to: "/", label: "Build"},
   {to: "/leaderboard", label: "Leaderboard"},
   {to: "/live", label: "Live"},
+  {to: "/portfolio", label: "My positions"},
 ];
 
 export function Header() {

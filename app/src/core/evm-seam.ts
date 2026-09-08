@@ -46,6 +46,17 @@ const EXPLORER = "https://coston2-explorer.flare.network";
 const ERC20_ABI = ["function approve(address spender,uint256 amount) returns (bool)"];
 const VAULT_ABI = ["function deposit(uint256 amount)"];
 const FAUCET_ABI = ["function faucet()"];
+const SHARE_VAULT_ABI = [
+  "function redeem(uint256 shares) returns (uint256)",
+  "function balanceOf(address) view returns (uint256)",
+  "function navUsdE18() view returns (uint256)",
+  "function totalSupply() view returns (uint256)",
+];
+
+export interface VaultPosition {
+  shares: bigint;
+  valueUsd: number;
+}
 
 const COSTON2_PARAMS = {
   chainId: COSTON2_CHAIN_ID_HEX,
@@ -127,6 +138,61 @@ export async function depositOnChain(args: DepositArgs): Promise<DepositResult> 
     await (await usdc.approve(vault, amount)).wait();
     const v = new Contract(vault, VAULT_ABI, signer);
     const tx = await v.deposit(amount);
+    const rec = await tx.wait();
+    const hash = rec?.hash ?? tx.hash;
+    return {ok: true, mocked: false, txHash: hash, explorer: explorerTx(hash), address};
+  } catch (e) {
+    return {ok: false, mocked: false, error: errMessage(e)};
+  }
+}
+
+// Read the connected wallet's position in an index vault: share balance and the
+// current USD value of those shares (shares * NAV / totalSupply). Read-only, so
+// it uses the provider without a signer. Returns null on the mock/no-vault path.
+export async function readVaultPosition(args: {
+  provider: Eip1193Provider | null;
+  vault: string | null;
+  address: string | null;
+  mode: "mock" | "injected";
+}): Promise<VaultPosition | null> {
+  const {provider, vault, address, mode} = args;
+  if (mode !== "injected" || !provider || !vault || !address) return null;
+  try {
+    const browser = new BrowserProvider(provider);
+    const v = new Contract(vault, SHARE_VAULT_ABI, browser);
+    const [shares, navE18, ts] = await Promise.all([
+      v.balanceOf(address) as Promise<bigint>,
+      v.navUsdE18() as Promise<bigint>,
+      v.totalSupply() as Promise<bigint>,
+    ]);
+    const valueUsd =
+      ts > 0n ? Number((navE18 * shares) / ts / 10n ** 16n) / 100 : 0;
+    return {shares, valueUsd};
+  } catch {
+    return null;
+  }
+}
+
+// Redeem ALL of the connected wallet's shares in an index vault for the
+// stablecoin (a real Coston2 tx). Mocked with the demo account.
+export async function redeemOnChain(args: {
+  provider: Eip1193Provider | null;
+  vault: string | null;
+  mode: "mock" | "injected";
+}): Promise<DepositResult> {
+  const {provider, vault, mode} = args;
+  if (mode !== "injected" || !provider || !vault) {
+    return {ok: true, mocked: true, txHash: mockTxHash(vault ?? "redeem", 0)};
+  }
+  try {
+    await ensureCoston2(provider);
+    const browser = new BrowserProvider(provider);
+    const signer = await browser.getSigner();
+    const address = await signer.getAddress();
+    const v = new Contract(vault, SHARE_VAULT_ABI, signer);
+    const shares = (await v.balanceOf(address)) as bigint;
+    if (shares === 0n) return {ok: false, mocked: false, error: "No shares to redeem"};
+    const tx = await v.redeem(shares);
     const rec = await tx.wait();
     const hash = rec?.hash ?? tx.hash;
     return {ok: true, mocked: false, txHash: hash, explorer: explorerTx(hash), address};

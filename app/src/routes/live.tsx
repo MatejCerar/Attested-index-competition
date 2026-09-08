@@ -16,7 +16,13 @@ import {
 import {notifications} from "@mantine/notifications";
 import {Link} from "@tanstack/react-router";
 import {useEffect, useRef, useState} from "react";
-import {depositOnChain, mintTestUsd} from "@/core/evm-seam.ts";
+import {
+  depositOnChain,
+  mintTestUsd,
+  readVaultPosition,
+  redeemOnChain,
+  type VaultPosition,
+} from "@/core/evm-seam.ts";
 import {useOnchain} from "@/core/use-onchain.ts";
 import {useWallet} from "@/core/wallet-context.tsx";
 import {
@@ -45,13 +51,14 @@ interface InvestCtx {
   stable: string | null;
   provider: ReturnType<typeof useWallet>["provider"];
   mode: "mock" | "injected";
+  address: string | null;
   realWallet: boolean;
 }
 
 export function LivePage() {
   const {data, isLoading, error} = useLive();
   const {data: onchain} = useOnchain();
-  const {connected, mode, provider} = useWallet();
+  const {connected, mode, provider, address} = useWallet();
   const [minting, setMinting] = useState(false);
 
   const stable = onchain?.stable ?? null;
@@ -62,6 +69,7 @@ export function LivePage() {
     stable,
     provider,
     mode,
+    address,
     realWallet,
   };
 
@@ -297,13 +305,30 @@ function Meta({label, children}: {label: string; children: React.ReactNode}) {
   );
 }
 
-// Real on-chain deposit of 1000 mUSDC into one index's StableIndexVault
-// (approve + deposit on Coston2). Disabled until an injected wallet is
-// connected; with the demo account depositOnChain returns a mocked result.
-function InvestButton({vault, invest}: {vault: string; invest: InvestCtx}) {
-  const [busy, setBusy] = useState(false);
-  const run = async () => {
-    setBusy(true);
+// Deposit into / redeem from one index's on-chain vault, and show the connected
+// wallet's live position (share value). Invest deposits 1000 mUSDC; Redeem burns
+// all your shares back to mUSDC. Both are real Coston2 txs with an injected
+// wallet; the demo account mocks them. Position is read from the vault directly.
+function VaultActions({vault, invest}: {vault: string; invest: InvestCtx}) {
+  const [busy, setBusy] = useState<"" | "invest" | "redeem">("");
+  const [pos, setPos] = useState<VaultPosition | null>(null);
+
+  const refresh = () => {
+    if (!invest.realWallet) {
+      setPos(null);
+      return;
+    }
+    readVaultPosition({
+      provider: invest.provider,
+      vault,
+      address: invest.address,
+      mode: invest.mode,
+    }).then(setPos);
+  };
+  useEffect(refresh, [invest.realWallet, invest.address, invest.mode, vault]);
+
+  const runInvest = async () => {
+    setBusy("invest");
     try {
       const res = await depositOnChain({
         provider: invest.provider,
@@ -318,33 +343,73 @@ function InvestButton({vault, invest}: {vault: string; invest: InvestCtx}) {
         message: res.ok
           ? res.mocked
             ? "Mocked (demo account, no chain)."
-            : `1000 mUSDC deposited into this index's vault on Coston2. ` +
-              `tx ${res.txHash?.slice(0, 10)}...`
+            : `1000 mUSDC deposited into this index's vault. tx ${res.txHash?.slice(0, 10)}...`
           : String(res.error),
       });
+      if (res.ok) refresh();
     } finally {
-      setBusy(false);
+      setBusy("");
     }
   };
-  const btn = (
+
+  const runRedeem = async () => {
+    setBusy("redeem");
+    try {
+      const res = await redeemOnChain({provider: invest.provider, vault, mode: invest.mode});
+      notifications.show({
+        color: res.ok ? "green" : "red",
+        title: res.ok ? "Redeemed your shares" : "Redeem failed",
+        message: res.ok
+          ? res.mocked
+            ? "Mocked (demo account, no chain)."
+            : `Redeemed to mUSDC. tx ${res.txHash?.slice(0, 10)}...`
+          : String(res.error),
+      });
+      if (res.ok) refresh();
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const invBtn = (
     <Button
       size="compact-sm"
       variant="light"
       color="green"
-      loading={busy}
+      loading={busy === "invest"}
       disabled={invest.realWallet && !invest.stable}
-      onClick={run}
+      onClick={runInvest}
     >
       Invest 1000
     </Button>
   );
-  // Injected wallet drives a real tx; otherwise it mocks, so hint that.
-  return invest.realWallet ? (
-    btn
-  ) : (
-    <MTooltip label="Connect an injected wallet on Coston2 for a real deposit (demo account mocks it)">
-      {btn}
-    </MTooltip>
+  const hasPos = pos != null && pos.shares > 0n;
+  return (
+    <Group gap={8} mt={6} wrap="wrap">
+      {invest.realWallet ? (
+        invBtn
+      ) : (
+        <MTooltip label="Connect an injected wallet on Coston2 for a real deposit (demo account mocks it)">
+          {invBtn}
+        </MTooltip>
+      )}
+      {hasPos && (
+        <>
+          <Text size="note" c="teal" fw={600}>
+            Your position: {usd(pos!.valueUsd)}
+          </Text>
+          <Button
+            size="compact-sm"
+            variant="subtle"
+            color="red"
+            loading={busy === "redeem"}
+            onClick={runRedeem}
+          >
+            Redeem
+          </Button>
+        </>
+      )}
+    </Group>
   );
 }
 
@@ -433,11 +498,7 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
             )}
           </Group>
         )}
-        {vaultAddr && (
-          <Group gap={8} mt={6}>
-            <InvestButton vault={vaultAddr} invest={invest} />
-          </Group>
-        )}
+        {vaultAddr && <VaultActions vault={vaultAddr} invest={invest} />}
       </Table.Td>
       <Table.Td>
         <Group gap={4}>

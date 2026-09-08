@@ -243,7 +243,10 @@ async function handleAdd(req, res) {
     if (CHAIN) {
         try {
             onchain = await scoreBasketOnChain(basket, {
-                depositUsd: DEPOSIT_USD, feeBps: FEE_BPS, priceFor: (id) => priceFor(id, byId),
+                depositUsd: DEPOSIT_USD,
+                feeBps: FEE_BPS,
+                priceFor: (id) => priceFor(id, byId),
+                symFor: (id) => byId.get(id)?.ticker,
             });
         } catch (e) {
             console.error("[add] on-chain scoring failed, off-chain fallback:", String(e));

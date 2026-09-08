@@ -431,33 +431,43 @@ async function initChain() {
     console.log(`ON-CHAIN: pushing live prices into ${Object.keys(cfg.pools).length} pools, gov=${gov.address}`);
     return {cfg, provider, gov, abi, Contract, poolAbi, vaultAbi, teeSign, sqrtUsd: null};
 }
-// Push this tick's prices into the pools, read slot0 back to on-chain USD.
+// Re-read compete-onchain.json so the engine picks up pools + vaults the server
+// adds at runtime when a user submits an index (Phase 2). Cheap file read each
+// tick; a partial/short read is caught and the previous cfg is kept.
+function refreshChainCfg() {
+    if (!chain) return;
+    try {
+        const fresh = JSON.parse(
+            readFileSync(join(dataDir, "compete-onchain.json"), "utf8")
+        );
+        if (fresh.pools) chain.cfg.pools = fresh.pools;
+        if (fresh.vaults) chain.cfg.vaults = fresh.vaults;
+    } catch {
+        /* keep the current cfg on a transient read/parse error */
+    }
+}
+
+// Push this tick's live prices into each asset's pool via setPriceE18 so the
+// vault's on-chain navUsdE18() tracks the market. Pools are keyed by TICKER
+// (NVDAx) while prices are keyed by underlying symbol (NVDA), so map through the
+// field legs. The vault reads pool.priceUsdE18() directly for NAV.
 async function pushPricesOnChain(px) {
-    const {sqrtPriceX96ToUsd} = await import("../index/prices.mjs");
     const {cfg, gov, Contract, poolAbi} = chain;
-    const onchainPx = {};
+    const priceByPoolSym = {};
+    for (const b of field)
+        for (const l of b.legs)
+            if (px[l.symbol] > 0) priceByPoolSym[l.sym] = px[l.symbol];
     for (const [sym, addr] of Object.entries(cfg.pools)) {
-        if (!(px[sym] > 0)) continue;
+        const p = priceByPoolSym[sym];
+        if (!(p > 0)) continue;
         try {
             const pool = new Contract(addr, poolAbi, gov);
-            const e18 = BigInt(Math.round(px[sym] * 1e18));
-            await (await pool.setPriceE18(e18)).wait();
-            const [sp] = await pool.slot0();
-            const [a0, ad, sd] = await Promise.all([
-                pool.assetIsToken0(),
-                pool.assetDecimals(),
-                pool.stableDecimals(),
-            ]);
-            onchainPx[sym] = sqrtPriceX96ToUsd(sp, {
-                assetIsToken0: a0,
-                assetDecimals: Number(ad),
-                stableDecimals: Number(sd),
-            });
+            await (await pool.setPriceE18(BigInt(Math.round(p * 1e18)))).wait();
         } catch (e) {
             console.error(`pool ${sym} setPrice failed:`, e.message);
         }
     }
-    return onchainPx;
+    return {};
 }
 // Relay a real FCC-signed rebalance for one index; returns the tx hash.
 async function rebalanceOnChain(b, px) {
@@ -638,8 +648,9 @@ async function main() {
     // capital, take the per-leg baseline for chart change.
     let px = await fetchTick();
     if (onChainNow) {
+        refreshChainCfg();
         const oc = await pushPricesOnChain(px);
-        px = {...px, ...oc}; // prefer the real on-chain price where present
+        px = {...px, ...oc};
     }
     for (const b of field) baselineIndex(b, px);
     const sampleSym = field[0].legs[0].symbol;
@@ -652,6 +663,7 @@ async function main() {
         if (stopping) break;
         let tickPx = await fetchTick();
         if (onChainNow) {
+            refreshChainCfg();
             const oc = await pushPricesOnChain(tickPx);
             tickPx = {...tickPx, ...oc};
         }

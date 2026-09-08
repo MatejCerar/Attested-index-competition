@@ -33,8 +33,24 @@ export function assetIndex() {
 // keyword overlap with the prompt (ticker, name, issuer, class), then by 24h
 // volume, and take the top `limit`. Keeps the model prompt small instead of
 // dumping ~1,300 rows.
+// A real exchange-style ticker (NVDAx, LLY, XAUT0) vs a name-as-ticker perp row
+// ("S&P 500 Index", "SK hynix Inc."): no spaces, short, alphanumeric.
+const cleanTicker = (t) => typeof t === "string" && /^[A-Za-z0-9.\-]{1,12}$/.test(t);
+
+// Reputable tokenized-RWA issuers whose listings are the recognizable ones the
+// demo is about (the house indices draw from these). Used to bias the liquidity
+// filler toward real tokenized equities/ETFs/metals instead of raw-volume noise.
+const CORE_ISSUERS = ["backed", "ondo", "robinhood", "anchored", "reality", "usdt0"];
+const coreIssuer = (a) =>
+    CORE_ISSUERS.some((p) => String(a.issuer || "").toLowerCase().includes(p));
+
 export function candidatesForPrompt(prompt, {limit = 60} = {}) {
-    const list = selectableAssets();
+    // Generation candidates are clean-ticker only: the catalog carries
+    // name-as-ticker perp/fund rows ("S&P 500 Index", "State Street SPDR...")
+    // that produce ugly ids and often-unpriceable legs. Exclude them from every
+    // path (keyword hits, padding, and the no-match fallback) so generated
+    // baskets always use real tickers like the house indices do.
+    const list = selectableAssets().filter((a) => cleanTicker(a.ticker));
     const words = String(prompt || "")
         .toLowerCase()
         .split(/[^a-z0-9]+/)
@@ -49,23 +65,31 @@ export function candidatesForPrompt(prompt, {limit = 60} = {}) {
     const anyHit = scored.some((x) => x.s > 0);
     // Rank by prompt-match score, then liquidity.
     scored.sort((x, y) => y.s - x.s || y.v - x.v || x.a.name.localeCompare(y.a.name));
-    // Take the keyword hits, but ALWAYS give the model a usable field. A prompt
-    // like "high dividend blue chips" may keyword-match only one odd asset (e.g.
-    // HYG on "high"); handing the model a shortlist of one makes it return an
-    // empty index, which forces the default fallback. So if the hits are thin,
-    // pad up to MIN with the most liquid priceable names.
+
+    // Keyword hits first. Always give the model a usable field: a thin match
+    // ("high dividend blue chips" hits little) would otherwise starve it into an
+    // empty index and force the default fallback.
     const MIN = 24;
-    const hits = anyHit ? scored.filter((x) => x.s > 0) : scored;
-    const picked = hits.slice(0, limit);
-    if (picked.length < MIN) {
+    const picked = anyHit ? scored.filter((x) => x.s > 0).slice(0, limit) : [];
+
+    // Fill up to a target, preferring recognizable core tokenized RWA (reputable
+    // issuers) over raw-volume noise (the catalog is heavy with duplicate gold
+    // tokens). When nothing matched at all, build a fuller default field so an
+    // abstract prompt still gets a diversified, sensible basket to pick from.
+    const target = anyHit ? MIN : limit;
+    if (picked.length < target) {
         const have = new Set(picked.map((x) => x.a.id));
-        for (const x of scored) {
-            if (picked.length >= MIN) break;
-            if (!have.has(x.a.id)) {
+        const fill = (pred) => {
+            for (const x of scored) {
+                if (picked.length >= target) break;
+                if (have.has(x.a.id)) continue;
+                if (!pred(x.a)) continue;
                 picked.push(x);
                 have.add(x.a.id);
             }
-        }
+        };
+        fill(coreIssuer); // recognizable tokenized equities/ETFs/metals first
+        fill(() => true); // then any clean-ticker name to reach the target
     }
     return picked.map((x) => x.a);
 }

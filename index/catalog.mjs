@@ -47,9 +47,25 @@ export function candidatesForPrompt(prompt, {limit = 60} = {}) {
     };
     const scored = list.map((a) => ({a, s: scoreOf(a), v: a.vol24 || 0}));
     const anyHit = scored.some((x) => x.s > 0);
-    // If the prompt matched nothing, fall back to the most liquid priceable
-    // names so the model still has a sensible RWA field to pick from.
+    // Rank by prompt-match score, then liquidity.
     scored.sort((x, y) => y.s - x.s || y.v - x.v || x.a.name.localeCompare(y.a.name));
-    const picked = (anyHit ? scored.filter((x) => x.s > 0) : scored).slice(0, limit);
+    // Take the keyword hits, but ALWAYS give the model a usable field. A prompt
+    // like "high dividend blue chips" may keyword-match only one odd asset (e.g.
+    // HYG on "high"); handing the model a shortlist of one makes it return an
+    // empty index, which forces the default fallback. So if the hits are thin,
+    // pad up to MIN with the most liquid priceable names.
+    const MIN = 24;
+    const hits = anyHit ? scored.filter((x) => x.s > 0) : scored;
+    const picked = hits.slice(0, limit);
+    if (picked.length < MIN) {
+        const have = new Set(picked.map((x) => x.a.id));
+        for (const x of scored) {
+            if (picked.length >= MIN) break;
+            if (!have.has(x.a.id)) {
+                picked.push(x);
+                have.add(x.a.id);
+            }
+        }
+    }
     return picked.map((x) => x.a);
 }

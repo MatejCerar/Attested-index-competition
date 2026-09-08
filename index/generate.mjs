@@ -171,7 +171,9 @@ function buildIndexPrompt(prompt, cands) {
         `User request: ${prompt}\n\n` +
         `Pick assets ONLY from this candidate list (use the exact TICKER shown, ` +
         `left of the dash):\n${candidateTable(cands)}\n\n` +
-        `Choose 2 to 8 tickers that best fit the request. Return ONLY compact ` +
+        `Choose 2 to 8 tickers that best fit the request. If nothing is a ` +
+        `perfect fit, pick the CLOSEST available names - never return an empty ` +
+        `list. Return ONLY compact ` +
         `JSON, no prose, of the form ` +
         `{"name":"...","rationale":"...","assets":["T1","T2"],` +
         `"weights":{"T1":pct,"T2":pct},"strategy":"id"} where pct are integers ` +

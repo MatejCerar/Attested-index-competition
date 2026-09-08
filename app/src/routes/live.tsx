@@ -1,6 +1,7 @@
 import {
   Alert,
   Badge,
+  Button,
   Card,
   Group,
   Loader,
@@ -9,10 +10,15 @@ import {
   Table,
   Text,
   Title,
+  Tooltip as MTooltip,
   Anchor,
 } from "@mantine/core";
+import {notifications} from "@mantine/notifications";
 import {Link} from "@tanstack/react-router";
-import {useEffect, useRef} from "react";
+import {useEffect, useRef, useState} from "react";
+import {depositOnChain, mintTestUsd} from "@/core/evm-seam.ts";
+import {useOnchain} from "@/core/use-onchain.ts";
+import {useWallet} from "@/core/wallet-context.tsx";
 import {
   CartesianGrid,
   Line,
@@ -33,8 +39,49 @@ const isZero = (h?: string | null) => !h || /^0x0+$/.test(h);
 // Distinct line colours, one per index by rank order.
 const LINE_COLORS = ["#e62058", "#f5a623", "#22b8cf", "#7048e8", "#20c997", "#adb5bd"];
 
+// What each row needs to offer a real on-chain deposit into that index's vault.
+interface InvestCtx {
+  vaults: Record<string, {addr: string}>;
+  stable: string | null;
+  provider: ReturnType<typeof useWallet>["provider"];
+  mode: "mock" | "injected";
+  realWallet: boolean;
+}
+
 export function LivePage() {
   const {data, isLoading, error} = useLive();
+  const {data: onchain} = useOnchain();
+  const {connected, mode, provider} = useWallet();
+  const [minting, setMinting] = useState(false);
+
+  const stable = onchain?.stable ?? null;
+  // A real (injected) wallet that can sign Coston2 txs, not the demo account.
+  const realWallet = connected && mode === "injected" && provider != null;
+  const invest: InvestCtx = {
+    vaults: onchain?.vaults ?? {},
+    stable,
+    provider,
+    mode,
+    realWallet,
+  };
+
+  const runMint = async () => {
+    setMinting(true);
+    try {
+      const res = await mintTestUsd({provider, stable, mode, amountUsdc: 1000});
+      notifications.show({
+        color: res.ok ? "green" : "red",
+        title: res.ok ? "Minted 1000 test USD" : "Mint failed",
+        message: res.ok
+          ? res.mocked
+            ? "Mocked (demo account, no chain)."
+            : `1000 mUSDC minted to your wallet on Coston2. tx ${res.txHash?.slice(0, 10)}...`
+          : String(res.error),
+      });
+    } finally {
+      setMinting(false);
+    }
+  };
 
   if (isLoading) return <Loader />;
   if (error || !data)
@@ -101,6 +148,37 @@ export function LivePage() {
         <Meta label="Source">{data.sourceLabel ?? data.source}</Meta>
       </Group>
 
+      <Card withBorder radius="md">
+        <Group justify="space-between" wrap="wrap">
+          <div>
+            <Text fw={600}>Invest in an index</Text>
+            <Text size="note" c="dimmed" maw={560}>
+              Mint test USD, then Invest into any house index below. Deposit is a
+              real Coston2 transaction into that index's on-chain
+              StableIndexVault (approve + deposit). The $
+              {data.capital.toLocaleString()} competition NAV is a separate
+              simulation; this is the live on-chain vault.
+            </Text>
+          </div>
+          <Group gap="sm">
+            <Button
+              variant="light"
+              loading={minting}
+              disabled={invest.realWallet && !stable}
+              onClick={runMint}
+            >
+              Mint 1000 test USD
+            </Button>
+            {!invest.realWallet && (
+              <Text size="note" c="dimmed" maw={200}>
+                Connect an injected wallet on Coston2 to invest for real; the demo
+                account mocks it.
+              </Text>
+            )}
+          </Group>
+        </Group>
+      </Card>
+
       <NavChart data={data} />
 
       <Table.ScrollContainer minWidth={860}>
@@ -118,7 +196,7 @@ export function LivePage() {
           </Table.Thead>
           <Table.Tbody>
             {data.indices.map((b) => (
-              <LiveRow key={b.id} b={b} source={data.source} />
+              <LiveRow key={b.id} b={b} source={data.source} invest={invest} />
             ))}
           </Table.Tbody>
         </Table>
@@ -219,9 +297,61 @@ function Meta({label, children}: {label: string; children: React.ReactNode}) {
   );
 }
 
-function LiveRow({b, source}: {b: LiveIndex; source: string}) {
+// Real on-chain deposit of 1000 mUSDC into one index's StableIndexVault
+// (approve + deposit on Coston2). Disabled until an injected wallet is
+// connected; with the demo account depositOnChain returns a mocked result.
+function InvestButton({vault, invest}: {vault: string; invest: InvestCtx}) {
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const res = await depositOnChain({
+        provider: invest.provider,
+        stable: invest.stable,
+        vault,
+        amountUsdc: 1000,
+        mode: invest.mode,
+      });
+      notifications.show({
+        color: res.ok ? "green" : "red",
+        title: res.ok ? "Deposited into the index vault" : "Deposit failed",
+        message: res.ok
+          ? res.mocked
+            ? "Mocked (demo account, no chain)."
+            : `1000 mUSDC deposited into this index's vault on Coston2. ` +
+              `tx ${res.txHash?.slice(0, 10)}...`
+          : String(res.error),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const btn = (
+    <Button
+      size="compact-sm"
+      variant="light"
+      color="green"
+      loading={busy}
+      disabled={invest.realWallet && !invest.stable}
+      onClick={run}
+    >
+      Invest 1000
+    </Button>
+  );
+  // Injected wallet drives a real tx; otherwise it mocks, so hint that.
+  return invest.realWallet ? (
+    btn
+  ) : (
+    <MTooltip label="Connect an injected wallet on Coston2 for a real deposit (demo account mocks it)">
+      {btn}
+    </MTooltip>
+  );
+}
+
+function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: InvestCtx}) {
   // Track rank movement between refreshes for an up/down arrow.
   const prevRank = useRef<number | undefined>(b.rank);
+  const vaultAddr = invest.vaults[b.id]?.addr ?? null;
   const move = b.rank != null && prevRank.current != null ? prevRank.current - b.rank : 0;
   useEffect(() => {
     prevRank.current = b.rank;
@@ -301,6 +431,11 @@ function LiveRow({b, source}: {b: LiveIndex; source: string}) {
                 vault {short(b.vault)}
               </Anchor>
             )}
+          </Group>
+        )}
+        {vaultAddr && (
+          <Group gap={8} mt={6}>
+            <InvestButton vault={vaultAddr} invest={invest} />
           </Group>
         )}
       </Table.Td>

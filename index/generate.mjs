@@ -7,7 +7,7 @@
 import {spawn} from "node:child_process";
 import {INDICES} from "./indices.mjs";
 import {STRATEGIES} from "./strategies.mjs";
-import {candidatesForPrompt, assetIndex} from "./catalog.mjs";
+import {candidatesForPrompt, assetIndex, selectableAssets} from "./catalog.mjs";
 
 const MODEL = "claude-haiku-4-5-20251001";
 // API model id (bare alias, no date suffix) used by the headless Anthropic API
@@ -143,7 +143,7 @@ export async function generateWeights(index, {timeoutMs = 45000, limit = 60} = {
         return {weights: index.weights, source: "fallback"};
     }
     const parsed = extractJson(res.out);
-    const idx = parsed && validateIndex(parsed, cands);
+    const idx = validateWithCatalog(parsed, cands);
     if (!idx) {
         console.error(
             `[gen] ${index.id}: unparseable/empty weights, using fallback`
@@ -244,6 +244,15 @@ export function validateIndex(parsed, cands, byId = assetIndex()) {
     return {name, rationale, assets, weights: norm, strategy};
 }
 
+// Validate against the prompt shortlist first; if nothing resolves there, retry
+// against the FULL priceable catalog. Claude sometimes returns a real catalog
+// ticker that just was not in the narrow shortlist for a given phrasing, and we
+// do not want to discard those valid picks and fall back to the default basket.
+function validateWithCatalog(parsed, cands) {
+    if (!parsed) return null;
+    return validateIndex(parsed, cands) || validateIndex(parsed, selectableAssets());
+}
+
 // Prompt -> a whole index object {name, rationale, assets, weights, strategy}.
 // assets/weights use catalog ids; tickers are validated against the candidate
 // shortlist. Never throws: on any failure returns FALLBACK_INDEX.
@@ -255,7 +264,7 @@ export async function generateIndex(prompt, {timeoutMs = 45000, limit = 60} = {}
         return {...FALLBACK_INDEX};
     }
     const parsed = extractJson(res.out);
-    const idx = parsed && validateIndex(parsed, cands);
+    const idx = validateWithCatalog(parsed, cands);
     if (!idx) {
         console.error(`[gen] index: unparseable/empty, using fallback`);
         return {...FALLBACK_INDEX, raw: res.out.trim()};

@@ -13,7 +13,7 @@ export interface AddResult {
   mode?: "chain" | "off-chain";
   entry?: {
     id: string;
-    rank: number;
+    rank?: number;
     name: string;
     weekReturn: number;
     vault?: string; // the deployed index vault (when mode === "chain")

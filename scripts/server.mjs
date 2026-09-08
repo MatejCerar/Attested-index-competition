@@ -254,8 +254,17 @@ async function handleAdd(req, res) {
     }
     const scored = scoreOffChain(basket, byId);
     if (scored.error) return send(res, 400, {error: scored.error});
-    const row = toRow(basket, scored, onchain);
-    const entry = upsertLeaderboard(row);
+    // Do NOT write leaderboard.json here. The live engine is the SOLE writer of
+    // that file - it picks this basket up from user-baskets.json and ranks it
+    // every tick. A second writer here just clobbers the engine's view (that is
+    // what made the leaderboard look broken). We only return the vault + score
+    // so the FE can deposit and show a confirmation.
+    const entry = {
+        id: basket.id,
+        name: basket.name,
+        weekReturn: scored.weekReturn,
+        vault: onchain?.vault ?? null,
+    };
     send(res, 200, {entry, mode: onchain ? "chain" : "off-chain"});
 }
 

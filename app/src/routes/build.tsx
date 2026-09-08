@@ -219,8 +219,7 @@ export function BuildPage() {
         title: "Added to the competition",
         message:
           `"${basket.name}" is in the competition (${added.mode}). ` +
-          `Ranked #${added.entry?.rank} at ${((added.entry?.weekReturn ?? 0) * 100).toFixed(2)}%. ` +
-          `It joins Live on the next engine tick.`,
+          `It joins Live and the leaderboard on the next engine tick.`,
       });
 
       // Deposit YOUR 1000 mUSDC into the index's real vault - that is your

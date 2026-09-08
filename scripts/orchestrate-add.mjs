@@ -73,6 +73,19 @@ export async function scoreBasketOnChain(
         throw new Error("compete-onchain.json missing factory/stable - run compete-setup");
     }
 
+    // Reuse an existing vault for this index id: re-submitting the same index
+    // must NOT mint a second (empty) vault that the engine would then read as $0
+    // while the FE still points at the first one.
+    const existing = cfg.vaults?.[basket.id];
+    if (existing?.addr) {
+        return {
+            vault: existing.addr,
+            order: existing.order ?? [],
+            stable: cfg.stable,
+            reused: true,
+        };
+    }
+
     const provider = new JsonRpcProvider(cfg.rpc ?? RPC);
     const gov = new Wallet(PK, provider);
     const poolArt = load("MockUniswapV3Pool.json");

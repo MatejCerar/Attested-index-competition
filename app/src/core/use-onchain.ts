@@ -40,6 +40,10 @@ export function useOnchain() {
   return useQuery({
     queryKey: ["onchain"],
     queryFn: fetchOnchain,
-    staleTime: Infinity,
+    // The server adds vaults to this file at runtime (a user creating an index),
+    // so refetch periodically instead of caching forever - otherwise the FE and
+    // the live engine disagree on which vault address is current.
+    staleTime: 8_000,
+    refetchInterval: 10_000,
   });
 }

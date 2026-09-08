@@ -1,13 +1,30 @@
 import {BrowserProvider, Contract, parseUnits} from "ethers";
 
-// The deposit seam: the real deal, just mocked. With no injected wallet it
-// returns a simulated result (no chain, no funds). With an injected wallet it
-// approves mUSDC and calls vault.deposit(amount) on Coston2. Same call shape as
-// scripts/orchestrate-rebalance.mjs, so it is a true EVM path, only mocked by
-// default.
+// The deposit + mint seam. With a real EIP-1193 provider (an injected wallet
+// selected via EIP-6963) and a deployed stable/vault address it does real
+// Coston2 txs: MockUSDC.faucet() to mint 1000 test USD to the connected wallet,
+// and approve + StableIndexVault.deposit(amount) to deposit. With the mock
+// (demo) account it returns a simulated result so the UI flows with no chain.
+
+// Minimal EIP-1193 provider surface we rely on.
+export interface Eip1193Provider {
+  request(args: {method: string; params?: unknown[] | object}): Promise<unknown>;
+  on?(event: string, handler: (...args: unknown[]) => void): void;
+  removeListener?(event: string, handler: (...args: unknown[]) => void): void;
+}
+
 export interface DepositArgs {
-  vault: string;
+  provider: Eip1193Provider | null;
+  stable: string | null;
+  vault: string | null;
   amountUsdc: number;
+  mode: "mock" | "injected";
+}
+
+export interface MintArgs {
+  provider: Eip1193Provider | null;
+  stable: string | null;
+  amountUsdc?: number;
   mode: "mock" | "injected";
 }
 
@@ -15,77 +32,114 @@ export interface DepositResult {
   ok: boolean;
   mocked: boolean;
   txHash?: string;
+  explorer?: string;
+  address?: string;
   error?: string;
 }
 
-const COSTON2_CHAIN_ID = 114;
+export const COSTON2_CHAIN_ID = 114;
+const COSTON2_CHAIN_ID_HEX = "0x72"; // 114
 const USDC_DECIMALS = 6;
+const EXPLORER = "https://coston2-explorer.flare.network";
 
-// Minimal ABIs for the deposit + mint path.
+// Minimal ABIs for the mint + deposit path.
 const ERC20_ABI = ["function approve(address spender,uint256 amount) returns (bool)"];
 const VAULT_ABI = ["function deposit(uint256 amount)"];
-const USDC_MINT_ABI = ["function mint(address to,uint256 amount)"];
+const FAUCET_ABI = ["function faucet()"];
 
-// Read from a global config the app can inject at runtime; falls back to null
-// so the mock path is used when addresses are not configured.
-function stableAddress(): string | null {
-  return (window as any).__INDEX_COMPETITION_STABLE__ ?? null;
+const COSTON2_PARAMS = {
+  chainId: COSTON2_CHAIN_ID_HEX,
+  chainName: "Flare Testnet Coston2",
+  nativeCurrency: {name: "Coston2 Flare", symbol: "C2FLR", decimals: 18},
+  rpcUrls: ["https://coston2-api.flare.network/ext/C/rpc"],
+  blockExplorerUrls: [EXPLORER],
+};
+
+function explorerTx(hash: string): string {
+  return `${EXPLORER}/tx/${hash}`;
 }
 
-export async function depositOnChain(args: DepositArgs): Promise<DepositResult> {
-  const {vault, amountUsdc, mode} = args;
-  const injected = typeof window !== "undefined" && (window as any).ethereum;
-  const stable = stableAddress();
-
-  if (mode !== "injected" || !injected || !stable) {
-    // Mocked: simulate a successful deposit without touching a chain.
-    return {ok: true, mocked: true, txHash: mockTxHash(vault, amountUsdc)};
-  }
-
+// Ensure the wallet is on Coston2 (chain 114). Requests a switch, adding the
+// chain on 4902 (unknown chain). Throws a readable error if the user rejects.
+export async function ensureCoston2(provider: Eip1193Provider): Promise<void> {
+  const current = (await provider.request({method: "eth_chainId"})) as string;
+  if (typeof current === "string" && parseInt(current, 16) === COSTON2_CHAIN_ID) return;
   try {
-    const provider = new BrowserProvider(injected);
-    const net = await provider.getNetwork();
-    if (Number(net.chainId) !== COSTON2_CHAIN_ID) {
-      return {ok: false, mocked: false, error: "Wrong network: connect to Coston2 (chain 114)."};
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{chainId: COSTON2_CHAIN_ID_HEX}],
+    });
+  } catch (e) {
+    const code = (e as {code?: number}).code;
+    if (code === 4902) {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [COSTON2_PARAMS],
+      });
+      return;
     }
-    const signer = await provider.getSigner();
+    if (code === 4001) {
+      throw new Error("Network switch rejected: please switch your wallet to Coston2 (chain 114).");
+    }
+    throw e;
+  }
+}
+
+// Mint 1000 test USD to the CONNECTED wallet via MockUSDC.faucet() (which mints
+// FAUCET_AMOUNT to msg.sender). Real tx on Coston2; mocked with the demo
+// account or when no stable address is configured.
+export async function mintTestUsd(args: MintArgs): Promise<DepositResult> {
+  const {provider, stable, mode} = args;
+  const amountUsdc = args.amountUsdc ?? 1000;
+  if (mode !== "injected" || !provider || !stable) {
+    return {ok: true, mocked: true, txHash: mockTxHash("mint", amountUsdc)};
+  }
+  try {
+    await ensureCoston2(provider);
+    const browser = new BrowserProvider(provider);
+    const signer = await browser.getSigner();
+    const address = await signer.getAddress();
+    const usdc = new Contract(stable, FAUCET_ABI, signer);
+    const tx = await usdc.faucet();
+    const rec = await tx.wait();
+    const hash = rec?.hash ?? tx.hash;
+    return {ok: true, mocked: false, txHash: hash, explorer: explorerTx(hash), address};
+  } catch (e) {
+    return {ok: false, mocked: false, error: errMessage(e)};
+  }
+}
+
+// Deposit `amountUsdc` into a deployed StableIndexVault: approve mUSDC on the
+// stable, then vault.deposit(amount). Real tx on Coston2; mocked with the demo
+// account or when no stable/vault address is available.
+export async function depositOnChain(args: DepositArgs): Promise<DepositResult> {
+  const {provider, stable, vault, amountUsdc, mode} = args;
+  if (mode !== "injected" || !provider || !stable || !vault) {
+    return {ok: true, mocked: true, txHash: mockTxHash(vault ?? "vault", amountUsdc)};
+  }
+  try {
+    await ensureCoston2(provider);
+    const browser = new BrowserProvider(provider);
+    const signer = await browser.getSigner();
+    const address = await signer.getAddress();
     const amount = parseUnits(String(amountUsdc), USDC_DECIMALS);
     const usdc = new Contract(stable, ERC20_ABI, signer);
     await (await usdc.approve(vault, amount)).wait();
     const v = new Contract(vault, VAULT_ABI, signer);
     const tx = await v.deposit(amount);
     const rec = await tx.wait();
-    return {ok: true, mocked: false, txHash: rec?.hash ?? tx.hash};
+    const hash = rec?.hash ?? tx.hash;
+    return {ok: true, mocked: false, txHash: hash, explorer: explorerTx(hash), address};
   } catch (e) {
-    return {ok: false, mocked: false, error: String((e as Error).message ?? e)};
+    return {ok: false, mocked: false, error: errMessage(e)};
   }
 }
 
-// Mint test USD 1:1 through the same seam. With a wallet + configured stable
-// address it calls MockUSDC.mint(to, amount) on Coston2; otherwise it mocks a
-// successful mint so the UI flow works with no chain.
-export async function mintTestUsd(amountUsdc = 1000): Promise<DepositResult> {
-  const injected = typeof window !== "undefined" && (window as any).ethereum;
-  const stable = stableAddress();
-  if (!injected || !stable) {
-    return {ok: true, mocked: true, txHash: mockTxHash("mint", amountUsdc)};
-  }
-  try {
-    const provider = new BrowserProvider(injected);
-    const net = await provider.getNetwork();
-    if (Number(net.chainId) !== COSTON2_CHAIN_ID) {
-      return {ok: false, mocked: false, error: "Wrong network: connect to Coston2 (chain 114)."};
-    }
-    const signer = await provider.getSigner();
-    const to = await signer.getAddress();
-    const amount = parseUnits(String(amountUsdc), USDC_DECIMALS);
-    const usdc = new Contract(stable, USDC_MINT_ABI, signer);
-    const tx = await usdc.mint(to, amount);
-    const rec = await tx.wait();
-    return {ok: true, mocked: false, txHash: rec?.hash ?? tx.hash};
-  } catch (e) {
-    return {ok: false, mocked: false, error: String((e as Error).message ?? e)};
-  }
+function errMessage(e: unknown): string {
+  const code = (e as {code?: number}).code;
+  if (code === 4001) return "Transaction rejected in wallet.";
+  const shortMessage = (e as {shortMessage?: string}).shortMessage;
+  return String(shortMessage ?? (e as Error)?.message ?? e);
 }
 
 // A deterministic pseudo-hash so the mocked UI can show a plausible link.

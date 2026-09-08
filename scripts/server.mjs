@@ -26,6 +26,7 @@ const userBasketsPath = join(dataDir, "user-baskets.json");
 const leaderboardPath = join(dataDir, "leaderboard.json");
 const livePath = join(dataDir, "live.json");
 const catalogPath = join(dataDir, "catalog.json");
+const onchainPath = join(dataDir, "compete-onchain.json");
 
 const PORT = Number(process.env.PORT ?? 8787);
 const ORIGIN = process.env.CORS_ORIGIN ?? "*";
@@ -273,6 +274,8 @@ const server = createServer(async (req, res) => {
             return send(res, 200, readJson(livePath, {indices: []}));
         if (req.method === "GET" && url.pathname === "/api/catalog")
             return send(res, 200, readJson(catalogPath, {assets: []}));
+        if (req.method === "GET" && url.pathname === "/api/onchain")
+            return send(res, 200, readJson(onchainPath, {stable: null, vaults: {}, pools: {}}));
         send(res, 404, {error: "not found"});
     } catch (e) {
         console.error(e);

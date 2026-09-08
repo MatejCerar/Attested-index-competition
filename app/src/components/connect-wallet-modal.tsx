@@ -1,11 +1,12 @@
-import {Button, Group, Modal, Stack, Text, UnstyledButton} from "@mantine/core";
+import {Button, Group, Image, Modal, Stack, Text, UnstyledButton} from "@mantine/core";
 import {notifications} from "@mantine/notifications";
 import {useWallet} from "@/core/wallet-context.tsx";
 
-// The connect-wallet modal LOOK, lifted from the template's multi-step modal
-// but wired to the EVM seam (mock by default, injected wallet if present). No
-// XRPL plumbing: two entry points, an injected EVM wallet and a demo (mock)
-// account.
+// The connect-wallet modal. It lists the injected wallets discovered via
+// EIP-6963 (fixing the MetaMask + Phantom collision on window.ethereum), plus a
+// fallback "Injected wallet" if none announce, plus a demo (mock) account.
+// Picking a real wallet requests accounts on THAT provider; errors surface as a
+// red notification (never swallowed).
 export function ConnectWalletModal({
   opened,
   onClose,
@@ -13,37 +14,70 @@ export function ConnectWalletModal({
   opened: boolean;
   onClose: () => void;
 }) {
-  const {connect} = useWallet();
+  const {connect, wallets} = useWallet();
 
-  const pick = async (mode: "injected" | "mock") => {
-    await connect(mode);
-    notifications.show({
-      color: "green",
-      message: mode === "injected" ? "Wallet connected" : "Demo account connected (mock)",
-    });
-    onClose();
+  const run = async (
+    target: {kind: "eip6963"; uuid: string} | {kind: "injected"} | {kind: "mock"},
+    label: string
+  ) => {
+    try {
+      await connect(target);
+      notifications.show({
+        color: "green",
+        message: target.kind === "mock" ? "Demo account connected (mock)" : `${label} connected`,
+      });
+      onClose();
+    } catch (e) {
+      notifications.show({
+        color: "red",
+        title: "Connect failed",
+        message: String((e as Error)?.message ?? e),
+      });
+    }
   };
 
-  const injectedAvailable =
-    typeof window !== "undefined" && Boolean((window as any).ethereum);
+  const hasInjectedFallback =
+    wallets.length === 0 &&
+    typeof window !== "undefined" &&
+    Boolean((window as {ethereum?: unknown}).ethereum);
 
   return (
     <Modal opened={opened} onClose={onClose} centered title="Connect wallet" radius="md">
       <Stack gap="sm">
         <Text size="sBody" c="dimmed">
-          Deposits run on an EVM seam on Coston2. Connect an injected wallet for a
-          real testnet deposit, or use the demo account to explore the flow.
+          Mint and deposits run on Coston2 (Flare testnet). Connect a browser
+          wallet for real testnet txs, or use the demo account to explore the flow.
         </Text>
-        <WalletOption
-          label="Injected EVM wallet"
-          hint={injectedAvailable ? "MetaMask / browser wallet detected" : "No injected wallet found"}
-          disabled={!injectedAvailable}
-          onClick={() => pick("injected")}
-        />
+
+        {wallets.map((w) => (
+          <WalletOption
+            key={w.info.uuid}
+            label={w.info.name}
+            hint="Injected wallet (EIP-6963)"
+            icon={w.info.icon}
+            onClick={() => run({kind: "eip6963", uuid: w.info.uuid}, w.info.name)}
+          />
+        ))}
+
+        {hasInjectedFallback && (
+          <WalletOption
+            label="Injected wallet"
+            hint="Browser wallet detected on window.ethereum"
+            onClick={() => run({kind: "injected"}, "Injected wallet")}
+          />
+        )}
+
+        {wallets.length === 0 && !hasInjectedFallback && (
+          <Text size="note" c="dimmed">
+            No injected wallet detected. Install MetaMask (or another EIP-6963
+            wallet) and add Coston2, or use the demo account below.
+          </Text>
+        )}
+
         <WalletOption
           label="Demo account"
           hint="Mocked: no chain, no funds. The real deal, just mocked."
-          onClick={() => pick("mock")}
+          onClick={() => run({kind: "mock"}, "Demo account")}
         />
       </Stack>
     </Modal>
@@ -53,37 +87,39 @@ export function ConnectWalletModal({
 function WalletOption({
   label,
   hint,
+  icon,
   onClick,
-  disabled,
 }: {
   label: string;
   hint: string;
+  icon?: string;
   onClick: () => void;
-  disabled?: boolean;
 }) {
   return (
     <UnstyledButton
-      onClick={disabled ? undefined : onClick}
+      onClick={onClick}
       style={{
         border: "1px solid var(--mantine-color-neutrals-stroke-medium)",
         borderRadius: "var(--mantine-radius-md)",
         padding: "12px 14px",
-        opacity: disabled ? 0.5 : 1,
-        cursor: disabled ? "not-allowed" : "pointer",
+        cursor: "pointer",
       }}
     >
-      <Group justify="space-between">
-        <div>
-          <Text fw={600}>{label}</Text>
-          <Text size="note" c="dimmed">
-            {hint}
-          </Text>
-        </div>
-        {!disabled && (
-          <Button size="xs" variant="light" component="span">
-            Select
-          </Button>
-        )}
+      <Group justify="space-between" wrap="nowrap">
+        <Group gap="sm" wrap="nowrap" style={{minWidth: 0}}>
+          {icon && <Image src={icon} w={24} h={24} radius="sm" alt={label} />}
+          <div style={{minWidth: 0}}>
+            <Text fw={600} truncate>
+              {label}
+            </Text>
+            <Text size="note" c="dimmed" truncate>
+              {hint}
+            </Text>
+          </div>
+        </Group>
+        <Button size="xs" variant="light" component="span">
+          Select
+        </Button>
       </Group>
     </UnstyledButton>
   );

@@ -28,11 +28,14 @@ import {
   type StrategyGroup,
 } from "@/core/strategies.ts";
 import type {CatalogAsset, UserBasket} from "@/core/types.ts";
+import {depositOnChain, mintTestUsd} from "@/core/evm-seam.ts";
 import {useCatalog} from "@/core/use-data.ts";
+import {useOnchain} from "@/core/use-onchain.ts";
 import {useWallet} from "@/core/wallet-context.tsx";
 
 const usd = (x: number | null) =>
   x == null ? "-" : `$${x.toLocaleString(undefined, {maximumFractionDigits: x < 10 ? 4 : 2})}`;
+const short = (a?: string) => (a ? `${a.slice(0, 6)}...${a.slice(-4)}` : "your wallet");
 const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "index";
 
@@ -61,9 +64,14 @@ const PROMPT_TEMPLATES = [
 
 export function BuildPage() {
   const {data: catalog, isLoading} = useCatalog();
-  const {connected, deposit, mint} = useWallet();
+  const {data: onchain} = useOnchain();
+  const {connected, mode, provider} = useWallet();
   const queryClient = useQueryClient();
   const [minting, setMinting] = useState(false);
+
+  const stable = onchain?.stable ?? null;
+  // A real wallet (not the mock demo) that can sign Coston2 txs.
+  const realWallet = connected && mode === "injected" && provider != null;
 
   // Builder state.
   const [picked, setPicked] = useState<Record<string, number>>({});
@@ -131,12 +139,16 @@ export function BuildPage() {
   const runMint = async () => {
     setMinting(true);
     try {
-      const res = await mint(1000);
+      const res = await mintTestUsd({provider, stable, mode, amountUsdc: 1000});
       notifications.show({
         color: res.ok ? "green" : "red",
+        title: res.ok ? "Minted 1000 test USD" : "Mint failed",
         message: res.ok
-          ? `Minted 1000 test USD ${res.mocked ? "(mocked)" : "(Coston2)"} tx ${res.txHash?.slice(0, 10)}...`
-          : `Mint failed: ${res.error}`,
+          ? res.mocked
+            ? "Mocked (demo account, no chain)."
+            : `1000 mUSDC minted to ${short(res.address)} on Coston2. ` +
+              `tx ${res.txHash?.slice(0, 10)}...`
+          : String(res.error),
       });
     } finally {
       setMinting(false);
@@ -205,14 +217,26 @@ export function BuildPage() {
         `It joins Live on the next engine tick.`,
     });
 
-    // Optional deposit via the EVM seam (mock by default).
-    if (connected) {
-      const res = await deposit(`0xVault_${basket.id}`, 1000);
+    // On-chain deposit only for indices with a DEPLOYED vault (the 5 house
+    // indices). A user-submitted basket has no on-chain vault, so it stays
+    // off-chain (the server already scored it above): no fake deposit.
+    const vaultAddr = onchain?.vaults[basket.id]?.addr ?? null;
+    if (realWallet && vaultAddr) {
+      const res = await depositOnChain({
+        provider,
+        stable,
+        vault: vaultAddr,
+        amountUsdc: 1000,
+        mode,
+      });
       notifications.show({
         color: res.ok ? "green" : "red",
+        title: res.ok ? "Deposited into the index vault" : "Deposit failed",
         message: res.ok
-          ? `Deposit ${res.mocked ? "(mocked)" : "(Coston2)"} tx ${res.txHash?.slice(0, 10)}...`
-          : `Deposit failed: ${res.error}`,
+          ? res.mocked
+            ? "Mocked (demo account, no chain)."
+            : `1000 mUSDC deposited on Coston2. tx ${res.txHash?.slice(0, 10)}...`
+          : String(res.error),
       });
     }
 
@@ -418,12 +442,14 @@ export function BuildPage() {
               fullWidth
               mb="sm"
               loading={minting}
+              disabled={realWallet && !stable}
               onClick={runMint}
             >
               Mint 1000 test USD
             </Button>
             <Button fullWidth disabled={!canSubmit} onClick={submit}>
-              Add to competition{connected ? " + deposit" : ""}
+              Add to competition
+              {realWallet && onchain?.vaults[slug(name)]?.addr ? " + deposit" : ""}
             </Button>
             {!canSubmit && (
               <Text size="note" c="dimmed" mt={6}>
@@ -431,8 +457,9 @@ export function BuildPage() {
               </Text>
             )}
             <Text size="note" c="dimmed" mt={6}>
-              Mint test USD 1:1 (MockUSDC, 6 decimals), then deposit into the
-              index vault. Real mint when a wallet is connected, mocked otherwise.
+              Mint calls MockUSDC.faucet() to send 1000 test USD (6 decimals) to
+              your connected wallet on Coston2. Deposits into the index vault are
+              on-chain for the house indices; mocked with the demo account.
             </Text>
           </Card>
 

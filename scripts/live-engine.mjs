@@ -196,7 +196,7 @@ function baselineIndex(b, px) {
 // racing. New submissions are baselined at current prices (return starts at 0)
 // and from then on behave exactly like a house index. Robust: dedupe by id,
 // skip house-id collisions and malformed baskets.
-function pickupSubmissions(px, now) {
+async function pickupSubmissions(px, now) {
     let list;
     try {
         list = JSON.parse(readFileSync(userBasketsPath, "utf8"));
@@ -239,14 +239,36 @@ function pickupSubmissions(px, now) {
             legs,
         };
         registerLegs(b);
-        // Backfill this tick's price map for the new legs from lastGood (their
-        // walk seed) so baseline + first rebalance see a price instead of 0.
-        // They fetch live from the next tick on.
-        for (const l of b.legs) if (!(px[l.symbol] > 0) && lastGood[l.symbol] > 0) px[l.symbol] = lastGood[l.symbol];
-        baselineIndex(b, px);
         field.push(b);
         raceIds.add(b.id);
         added.push(b);
+    }
+    if (added.length) {
+        // Baseline new submissions against a FRESH LIVE price for their legs, not
+        // the stale catalog snapshot. The mid-run fetchTick() ran before these
+        // legs existed, so px has no live price for them yet. Without this, the
+        // next tick's live price makes each leg read (livePrice / catalogPrice -
+        // 1) as a fake move on join - this is what made GME/bGME show -14%.
+        const need = new Set();
+        for (const b of added)
+            for (const l of b.legs) if (!(px[l.symbol] > 0)) need.add(l.symbol);
+        if (need.size) {
+            let y = {};
+            try {
+                y = await fetchYahoo([...need]);
+            } catch {
+                /* fall back to last good / walk seed below */
+            }
+            for (const s of need) {
+                if (y[s] > 0) {
+                    px[s] = y[s];
+                    lastGood[s] = y[s];
+                } else if (lastGood[s] > 0) {
+                    px[s] = lastGood[s]; // no live source (e.g. OPENAI): seed price
+                }
+            }
+        }
+        for (const b of added) baselineIndex(b, px);
     }
     return added;
 }
@@ -576,7 +598,7 @@ async function main() {
 
     // Register any already-submitted baskets before the first fetch so their
     // legs are in the batched price pull from t0.
-    pickupSubmissions({}, Date.now());
+    await pickupSubmissions({}, Date.now());
 
     // t0 baseline: fetch prices, mark availability, size holdings to equal
     // capital, take the per-leg baseline for chart change.
@@ -600,7 +622,7 @@ async function main() {
         }
         // Pick up new submissions (baselined at current prices, return 0 on join)
         // without touching the house indices' baselines.
-        const joined = pickupSubmissions(tickPx, Date.now());
+        const joined = await pickupSubmissions(tickPx, Date.now());
         if (joined.length)
             for (const b of joined)
                 console.log(`  + submission joined the race: ${b.name} [${b.strategy}] owner=you`);

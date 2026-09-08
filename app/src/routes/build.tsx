@@ -70,6 +70,8 @@ export function BuildPage() {
   const queryClient = useQueryClient();
   const [minting, setMinting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // How much of your own test USD to deposit into your index on submit.
+  const [depositAmt, setDepositAmt] = useState(1000);
 
   const stable = onchain?.stable ?? null;
   // A real wallet (not the mock demo) that can sign Coston2 txs.
@@ -229,24 +231,24 @@ export function BuildPage() {
         (added.mode === "chain" ? added.entry?.vault : null) ??
         onchain?.vaults[basket.id]?.addr ??
         null;
-      if (realWallet && vaultAddr) {
+      if (realWallet && vaultAddr && depositAmt > 0) {
         const res = await depositOnChain({
           provider,
           stable,
           vault: vaultAddr,
-          amountUsdc: 1000,
+          amountUsdc: depositAmt,
           mode,
         });
-        if (res.ok && !res.mocked) recordDeposit(vaultAddr, 1000);
+        if (res.ok && !res.mocked) recordDeposit(vaultAddr, depositAmt);
         notifications.show({
           color: res.ok ? "green" : "red",
           title: res.ok
-            ? "Deposited your 1000 into your index vault"
+            ? `Deposited $${depositAmt.toLocaleString()} into your index vault`
             : "Deposit failed",
           message: res.ok
             ? res.mocked
               ? "Mocked (demo account, no chain)."
-              : `Your 1000 mUSDC is now your position in this index. ` +
+              : `Your $${depositAmt.toLocaleString()} mUSDC is now your position. ` +
                 `tx ${res.txHash?.slice(0, 10)}... See My positions.`
             : String(res.error),
         });
@@ -462,6 +464,17 @@ export function BuildPage() {
             >
               Mint 1000 test USD
             </Button>
+            <NumberInput
+              label="Your deposit into this index"
+              description="Your own test USD that becomes your position. You need at least this much minted."
+              value={depositAmt}
+              onChange={(v) => setDepositAmt(Math.max(0, Number(v) || 0))}
+              min={0}
+              step={100}
+              prefix="$"
+              thousandSeparator=","
+              mb="sm"
+            />
             <Button
               fullWidth
               disabled={!canSubmit || submitting}
@@ -470,9 +483,9 @@ export function BuildPage() {
             >
               {submitting
                 ? "Adding to competition..."
-                : `Add to competition${
-                    realWallet && onchain?.vaults[slug(name)]?.addr ? " + deposit" : ""
-                  }`}
+                : realWallet && depositAmt > 0
+                  ? `Add to competition + deposit $${depositAmt.toLocaleString()}`
+                  : "Add to competition"}
             </Button>
             {!canSubmit && (
               <Text size="note" c="dimmed" mt={6}>

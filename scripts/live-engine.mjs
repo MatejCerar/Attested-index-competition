@@ -527,6 +527,12 @@ async function readChainNav() {
                 b.chainNav = Number(navE18 / 10n ** 16n) / 100; // USD, 2dp
                 b.chainRet = Number((navE18 * 1000000n) / shares) / 1e6 - 1;
                 b.chainTvl = Number(deposited) / 1e6; // gross deposited, USD
+            } else {
+                // Vault exists but nobody has deposited yet: show the real (zero)
+                // on-chain value, never the $100k simulation.
+                b.chainNav = Number(navE18 / 10n ** 16n) / 100;
+                b.chainRet = 0;
+                b.chainTvl = Number(deposited) / 1e6;
             }
         } catch (e) {
             console.error(`navUsdE18 ${b.id} read failed:`, e.message);
@@ -690,7 +696,9 @@ async function main() {
         for (const b of field) {
             const reason = stepIndex(b, tickPx, Date.now());
             if (reason) {
-                if (onChainNow && !deployLockHeld()) {
+                // Skip the on-chain rebalance for a vault with nothing deposited
+                // yet (nav==0 would revert): wait until its owner funds it.
+                if (onChainNow && !deployLockHeld() && b.chainTvl !== 0) {
                     try {
                         b.rebalanceTx = await rebalanceOnChain(b, tickPx);
                     } catch (e) {

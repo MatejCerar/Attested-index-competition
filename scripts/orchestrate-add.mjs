@@ -3,9 +3,11 @@
 //   1. ensures a MockUniswapV3Pool exists for every asset in the basket,
 //   2. mints a vault via factory.createVault(pools) (bound to the shared stable
 //      + FCC signer, so the user's minted mUSDC can deposit into it),
-//   3. seeds it with an initial deposit and one FCC-signed rebalance,
-//   4. registers the vault + any new pools back into compete-onchain.json so the
+//   3. registers the vault + any new pools back into compete-onchain.json so the
 //      live engine reads its NAV and the FE shows an Invest button for it.
+// The vault is created EMPTY: the user's own FE deposit is the only capital, and
+// the live engine does the first rebalance at live prices (like the house
+// indices), so there is no house seed money and no catalog-vs-live offset.
 // Needs PK + TEE_SIGN_URL and a completed compete-setup (cfg.factory present).
 import {readFileSync, writeFileSync, unlinkSync} from "node:fs";
 import {fileURLToPath} from "node:url";
@@ -84,7 +86,6 @@ export async function scoreBasketOnChain(
 
     const ids = Object.keys(basket.weights);
     const order = ids.map((id) => symFor(id)); // tickers, pool + vault order
-    const weightsBps = ids.map((id) => basket.weights[id] * 100); // sum 10000
     const pricesE18 = ids.map((id) => {
         const p = priceFor(id);
         if (!(p > 0)) throw new Error(`no price for ${id}`);
@@ -188,22 +189,10 @@ export async function scoreBasketOnChain(
             }
         }
         if (!vaultAddr) throw new Error("no VaultCreated event");
-        const vault = new Contract(vaultAddr, vaultArt.abi, gov);
-
-        // Seed initial capital + one FCC-signed rebalance (nonce 0).
-        await send((n) => usdc.mint(gov.address, toUsdc(depositUsd), {nonce: n}));
-        await send((n) => usdc.approve(vaultAddr, toUsdc(depositUsd), {nonce: n}));
-        const depRec = await send((n) =>
-            vault.deposit(toUsdc(depositUsd), {nonce: n})
-        );
-        const msg = abi.encode(
-            ["address", "uint256", "uint16[]", "uint256[]"],
-            [vaultAddr, 0, weightsBps, pricesE18]
-        );
-        const {sig} = await teeSign(msg);
-        const rebRec = await send((n) =>
-            vault.rebalance(weightsBps, pricesE18, sig, {nonce: n})
-        );
+        // No gov seed and no rebalance here: the vault starts empty, the user's
+        // own deposit (from the FE) is the only capital, and the live engine
+        // does the first rebalance at LIVE prices - same as the house indices,
+        // so there is no catalog-vs-live valuation offset and no house money.
 
         // Register the vault + new pools so the engine reads NAV and the FE can
         // deposit. Re-read first to avoid clobbering a concurrent write.
@@ -216,13 +205,7 @@ export async function scoreBasketOnChain(
         liveCfg.generatedAt = new Date().toISOString();
         writeFileSync(cfgPath, JSON.stringify(liveCfg, null, 2) + "\n");
 
-        return {
-            vault: vaultAddr,
-            order,
-            stable: cfg.stable,
-            depositTx: depRec.hash,
-            rebalanceTx: rebRec.hash,
-        };
+        return {vault: vaultAddr, order, stable: cfg.stable};
     } finally {
         try {
             unlinkSync(lockPath);

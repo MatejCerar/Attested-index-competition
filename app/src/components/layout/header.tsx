@@ -26,7 +26,7 @@ export function Header() {
         </Text>
       </Group>
 
-      <Group gap="lg" visibleFrom="sm">
+      <Group gap="md" wrap="nowrap">
         {NAV.map((n) => {
           const active = n.to === "/" ? path === "/" : path.startsWith(n.to);
           return (

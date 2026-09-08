@@ -68,6 +68,7 @@ export function BuildPage() {
   const {connected, mode, provider} = useWallet();
   const queryClient = useQueryClient();
   const [minting, setMinting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const stable = onchain?.stable ?? null;
   // A real wallet (not the mock demo) that can sign Coston2 txs.
@@ -176,7 +177,7 @@ export function BuildPage() {
   };
 
   const submit = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || submitting) return;
     const basket: UserBasket = {
       id: slug(name),
       name: name.trim(),
@@ -186,64 +187,69 @@ export function BuildPage() {
       weights: {...picked},
     };
 
-    // Submit to the competition server: it scores the basket with the real
-    // rebalance math, tags it owner:"you" in user-baskets.json (so the live
-    // engine races it), and ranks it on the leaderboard. If the server is
-    // unreachable the submission never reaches the competition, so we FAIL LOUDLY
-    // and do NOT present it as added.
-    const added = await addBasket(basket);
-    if (!added.ok) {
+    setSubmitting(true);
+    try {
+      // Submit to the competition server: it scores the basket with the real
+      // rebalance math, tags it owner:"you" in user-baskets.json (so the live
+      // engine races it), and ranks it on the leaderboard. If the server is
+      // unreachable the submission never reaches the competition, so we FAIL
+      // LOUDLY and do NOT present it as added.
+      const added = await addBasket(basket);
+      if (!added.ok) {
+        notifications.show({
+          color: "red",
+          title: "Not added to the competition",
+          message:
+            "Could not reach the competition server - is `npm run compete` running? " +
+            `Your index was not submitted (${added.error}). Nothing was added.`,
+          autoClose: false,
+        });
+        return;
+      }
+
+      // Only a successful server response counts as added: echo it locally and
+      // show success + the leaderboard / live links.
+      setBuilt((b) => [...b, basket]);
+      await queryClient.invalidateQueries({queryKey: ["leaderboard"]});
       notifications.show({
-        color: "red",
-        title: "Not added to the competition",
+        color: "green",
+        title: "Added to the competition",
         message:
-          "Could not reach the competition server - is `npm run compete` running? " +
-          `Your index was not submitted (${added.error}). Nothing was added.`,
-        autoClose: false,
+          `"${basket.name}" is in the competition (${added.mode}). ` +
+          `Ranked #${added.entry?.rank} at ${((added.entry?.weekReturn ?? 0) * 100).toFixed(2)}%. ` +
+          `It joins Live on the next engine tick.`,
       });
-      return;
+
+      // On-chain deposit only for indices with a DEPLOYED vault (the 5 house
+      // indices). A user-submitted basket has no on-chain vault, so it stays
+      // off-chain (the server already scored it above): no fake deposit.
+      const vaultAddr = onchain?.vaults[basket.id]?.addr ?? null;
+      if (realWallet && vaultAddr) {
+        const res = await depositOnChain({
+          provider,
+          stable,
+          vault: vaultAddr,
+          amountUsdc: 1000,
+          mode,
+        });
+        notifications.show({
+          color: res.ok ? "green" : "red",
+          title: res.ok ? "Deposited into the index vault" : "Deposit failed",
+          message: res.ok
+            ? res.mocked
+              ? "Mocked (demo account, no chain)."
+              : `1000 mUSDC deposited on Coston2. tx ${res.txHash?.slice(0, 10)}...`
+            : String(res.error),
+        });
+      }
+
+      setPicked({});
+      setName("");
+      setThesis("");
+      setStrategy(DEFAULT_STRATEGY);
+    } finally {
+      setSubmitting(false);
     }
-
-    // Only a successful server response counts as added: echo it locally and
-    // show success + the leaderboard / live links.
-    setBuilt((b) => [...b, basket]);
-    await queryClient.invalidateQueries({queryKey: ["leaderboard"]});
-    notifications.show({
-      color: "green",
-      title: "Added to the competition",
-      message:
-        `"${basket.name}" is in the competition (${added.mode}). ` +
-        `Ranked #${added.entry?.rank} at ${((added.entry?.weekReturn ?? 0) * 100).toFixed(2)}%. ` +
-        `It joins Live on the next engine tick.`,
-    });
-
-    // On-chain deposit only for indices with a DEPLOYED vault (the 5 house
-    // indices). A user-submitted basket has no on-chain vault, so it stays
-    // off-chain (the server already scored it above): no fake deposit.
-    const vaultAddr = onchain?.vaults[basket.id]?.addr ?? null;
-    if (realWallet && vaultAddr) {
-      const res = await depositOnChain({
-        provider,
-        stable,
-        vault: vaultAddr,
-        amountUsdc: 1000,
-        mode,
-      });
-      notifications.show({
-        color: res.ok ? "green" : "red",
-        title: res.ok ? "Deposited into the index vault" : "Deposit failed",
-        message: res.ok
-          ? res.mocked
-            ? "Mocked (demo account, no chain)."
-            : `1000 mUSDC deposited on Coston2. tx ${res.txHash?.slice(0, 10)}...`
-          : String(res.error),
-      });
-    }
-
-    setPicked({});
-    setName("");
-    setThesis("");
-    setStrategy(DEFAULT_STRATEGY);
   };
 
   if (isLoading) return <Loader />;
@@ -447,9 +453,17 @@ export function BuildPage() {
             >
               Mint 1000 test USD
             </Button>
-            <Button fullWidth disabled={!canSubmit} onClick={submit}>
-              Add to competition
-              {realWallet && onchain?.vaults[slug(name)]?.addr ? " + deposit" : ""}
+            <Button
+              fullWidth
+              disabled={!canSubmit || submitting}
+              loading={submitting}
+              onClick={submit}
+            >
+              {submitting
+                ? "Adding to competition..."
+                : `Add to competition${
+                    realWallet && onchain?.vaults[slug(name)]?.addr ? " + deposit" : ""
+                  }`}
             </Button>
             {!canSubmit && (
               <Text size="note" c="dimmed" mt={6}>
@@ -464,7 +478,12 @@ export function BuildPage() {
           </Card>
 
           {built.length > 0 && (
-            <Card withBorder radius="md" mt="md">
+            <Card withBorder radius="md" mt="md" style={{borderColor: "var(--mantine-color-green-6)"}}>
+              <Alert color="green" variant="light" mb="sm" title="In the competition">
+                {`"${built[built.length - 1].name}" was added and joins the live board on the
+                next engine tick (about 15s). It is being scored with the real rebalance math
+                right now.`}
+              </Alert>
               <Text fw={600} mb="xs">
                 Added to the competition this session ({built.length})
               </Text>
@@ -499,11 +518,11 @@ export function BuildPage() {
                 tee-node signs the rebalance on Coston2.
               </Alert>
               <Group mt="sm" gap="sm">
+                <Button component={Link} to="/live" color="green" size="sm">
+                  Watch it live
+                </Button>
                 <Button component={Link} to="/leaderboard" variant="light" size="sm">
                   View on leaderboard
-                </Button>
-                <Button component={Link} to="/live" variant="subtle" size="sm">
-                  Watch live
                 </Button>
               </Group>
             </Card>

@@ -431,6 +431,19 @@ async function initChain() {
     console.log(`ON-CHAIN: pushing live prices into ${Object.keys(cfg.pools).length} pools, gov=${gov.address}`);
     return {cfg, provider, gov, abi, Contract, poolAbi, vaultAbi, teeSign, sqrtUsd: null};
 }
+// True while the server is deploying a user-index vault. Both processes send txs
+// from the same key, so the engine PAUSES its on-chain writes (price pushes,
+// rebalances) while the lock is held to avoid nonce collisions. Reads (NAV) are
+// unaffected. The lock is a file with a timestamp; it goes stale after 2 min.
+function deployLockHeld() {
+    try {
+        const ts = Number(readFileSync(join(dataDir, "deploy.lock"), "utf8"));
+        return Number.isFinite(ts) && Date.now() - ts < 120000;
+    } catch {
+        return false;
+    }
+}
+
 // Re-read compete-onchain.json so the engine picks up pools + vaults the server
 // adds at runtime when a user submits an index (Phase 2). Cheap file read each
 // tick; a partial/short read is caught and the previous cfg is kept.
@@ -458,6 +471,7 @@ async function pushPricesOnChain(px) {
         for (const l of b.legs)
             if (px[l.symbol] > 0) priceByPoolSym[l.sym] = px[l.symbol];
     for (const [sym, addr] of Object.entries(cfg.pools)) {
+        if (deployLockHeld()) break; // server is deploying: pause our tx writes
         const p = priceByPoolSym[sym];
         if (!(p > 0)) continue;
         try {
@@ -676,7 +690,7 @@ async function main() {
         for (const b of field) {
             const reason = stepIndex(b, tickPx, Date.now());
             if (reason) {
-                if (onChainNow) {
+                if (onChainNow && !deployLockHeld()) {
                     try {
                         b.rebalanceTx = await rebalanceOnChain(b, tickPx);
                     } catch (e) {

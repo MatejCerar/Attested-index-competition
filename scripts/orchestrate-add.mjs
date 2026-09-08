@@ -7,7 +7,7 @@
 //   4. registers the vault + any new pools back into compete-onchain.json so the
 //      live engine reads its NAV and the FE shows an Invest button for it.
 // Needs PK + TEE_SIGN_URL and a completed compete-setup (cfg.factory present).
-import {readFileSync, writeFileSync} from "node:fs";
+import {readFileSync, writeFileSync, unlinkSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
 import {
@@ -16,7 +16,10 @@ import {
 } from "ethers";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const cfgPath = join(__dirname, "..", "app", "public", "data", "compete-onchain.json");
+const dataDir = join(__dirname, "..", "app", "public", "data");
+const cfgPath = join(dataDir, "compete-onchain.json");
+const lockPath = join(dataDir, "deploy.lock");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const abi = AbiCoder.defaultAbiCoder();
 const RPC = process.env.RPC ?? "https://coston2-api.flare.network/ext/C/rpc";
 const TEE_SIGN_URL = process.env.TEE_SIGN_URL ?? "http://127.0.0.1:7701/sign";
@@ -85,6 +88,11 @@ export async function scoreBasketOnChain(
         return BigInt(Math.round(p * 1e18));
     });
 
+    // Pause the live engine's on-chain writes (it uses the same key) to avoid
+    // nonce collisions, then give it a moment to notice the lock before we send.
+    writeFileSync(lockPath, String(Date.now()));
+    await sleep(3000);
+    try {
     // Ensure a pool per asset, seeded to its catalog price.
     const pools = {...(cfg.pools ?? {})};
     const newPools = {};
@@ -145,4 +153,11 @@ export async function scoreBasketOnChain(
         depositTx: depTx.hash,
         rebalanceTx: rebTx.hash,
     };
+    } finally {
+        try {
+            unlinkSync(lockPath);
+        } catch {
+            /* lock already removed */
+        }
+    }
 }

@@ -401,6 +401,9 @@ async function initChain() {
     const vaultAbi = [
         "function rebalance(uint16[] weightsBps,uint256[] pricesE18,bytes sig)",
         "function nonce() view returns (uint256)",
+        "function navUsdE18() view returns (uint256)",
+        "function totalSupply() view returns (uint256)",
+        "function totalDeposited() view returns (uint256)",
     ];
     async function teeSign(messageHex, retries = 20) {
         const b64 = Buffer.from(getBytes(messageHex)).toString("base64");
@@ -478,6 +481,35 @@ async function rebalanceOnChain(b, px) {
     return tx.hash;
 }
 
+// Read each index's REAL on-chain NAV from its vault and stash it on the field
+// entry. NAV (USD) = cash + sum(holdings*price) read on-chain, so it moves with
+// both live prices AND user deposits. Return is share-based (navUsdE18 /
+// totalSupply), which starts at 1.0 and is deposit-neutral, so deposits grow TVL
+// without faking performance. Vaults with no shares yet fall back to the sim.
+async function readChainNav() {
+    if (!ON_CHAIN || !chain) return;
+    const {cfg, gov, Contract, vaultAbi} = chain;
+    for (const b of field) {
+        const v = cfg.vaults[b.id];
+        if (!v) continue;
+        try {
+            const vault = new Contract(v.addr, vaultAbi, gov);
+            const [navE18, shares, deposited] = await Promise.all([
+                vault.navUsdE18(),
+                vault.totalSupply(),
+                vault.totalDeposited(),
+            ]);
+            if (shares > 0n) {
+                b.chainNav = Number(navE18 / 10n ** 16n) / 100; // USD, 2dp
+                b.chainRet = Number((navE18 * 1000000n) / shares) / 1e6 - 1;
+                b.chainTvl = Number(deposited) / 1e6; // gross deposited, USD
+            }
+        } catch (e) {
+            console.error(`navUsdE18 ${b.id} read failed:`, e.message);
+        }
+    }
+}
+
 // -- Snapshots. Writes live.json (per-index NAV series + rank + reason) and a
 // return-ranked leaderboard.json each tick. --
 const t0 = Date.now();
@@ -485,8 +517,9 @@ function snapshot(px) {
     const now = Date.now();
     const scored = field
         .map((b) => {
-            const nav = navOf(b, px);
-            const ret = nav / CAPITAL - 1;
+            // Real on-chain NAV/return when the vault is live; else the sim.
+            const nav = b.chainNav != null ? b.chainNav : navOf(b, px);
+            const ret = b.chainRet != null ? b.chainRet : nav / CAPITAL - 1;
             b.series.push({t: now, nav, ret});
             if (b.series.length > MAX_POINTS) b.series.shift();
             return {
@@ -500,6 +533,7 @@ function snapshot(px) {
                 notExecutable: false,
                 nav,
                 ret,
+                tvl: b.chainTvl ?? null, // real deposited stablecoin, USD (on-chain)
                 rebalances: b.rebalances,
                 lastReason: b.lastReason ?? "none yet",
                 lastRebalanceAt: b.lastRebalanceAt,
@@ -610,6 +644,7 @@ async function main() {
     for (const b of field) baselineIndex(b, px);
     const sampleSym = field[0].legs[0].symbol;
     console.log(`t0 baseline set. sample live price ${sampleSym}=${px[sampleSym]?.toFixed?.(4) ?? px[sampleSym]}`);
+    await readChainNav();
     snapshot(px);
 
     while (!stopping) {
@@ -639,6 +674,7 @@ async function main() {
                 console.log(`  rebalance ${b.name}: ${reason}${b.rebalanceTx ? ` tx=${b.rebalanceTx}` : ""}`);
             }
         }
+        await readChainNav();
         const scored = snapshot(tickPx);
         const lead = scored.slice(0, 3).map((r) => `${r.rank}.${r.name} ${pctS(r.ret)}`).join("   ");
         console.log(`[${new Date().toISOString().slice(11, 19)}] ${lead}`);

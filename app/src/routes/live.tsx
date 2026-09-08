@@ -463,7 +463,14 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
           {b.lastReason ?? "-"}
         </Text>
       </Table.Td>
-      <Table.Td style={{textAlign: "right"}}>{b.nav != null ? usd(b.nav) : "-"}</Table.Td>
+      <Table.Td style={{textAlign: "right"}}>
+        {b.nav != null ? usd(b.nav) : "-"}
+        {b.tvl != null && (
+          <Text size="note" c="dimmed">
+            TVL {usd(b.tvl)} on-chain
+          </Text>
+        )}
+      </Table.Td>
       <Table.Td style={{textAlign: "right"}}>
         <Text fw={700} c={(b.ret ?? 0) >= 0 ? "green" : "red"}>
           {b.ret != null ? pct(b.ret) : "-"}

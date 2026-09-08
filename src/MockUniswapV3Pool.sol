@@ -25,6 +25,7 @@ contract MockUniswapV3Pool {
 
     uint160 public sqrtPriceX96; // current pool price, Q64.96
     int24 public tick;
+    uint256 public priceUsdE18; // last set USD price, 1e18 (direct read for NAV)
     address public owner; // may push live prices; set to the deployer
 
     event PriceSeeded(uint256 priceUsdE18, uint160 sqrtPriceX96);
@@ -48,26 +49,27 @@ contract MockUniswapV3Pool {
 
     /// Seed the pool to a target asset price in USD (1e18-scaled). Open, so the
     /// seed script and tests can initialize without an owner check.
-    function seedPriceUsdE18(uint256 priceUsdE18) external {
-        uint160 sp = _writePrice(priceUsdE18);
-        emit PriceSeeded(priceUsdE18, sp);
+    function seedPriceUsdE18(uint256 _priceUsdE18) external {
+        uint160 sp = _writePrice(_priceUsdE18);
+        emit PriceSeeded(_priceUsdE18, sp);
     }
 
     /// Owner-only live price setter: the keeper pushes each tick's price here.
     /// Same math as the seed path; the slot0/observe read path is unchanged.
-    function setPriceE18(uint256 priceUsdE18) external {
+    function setPriceE18(uint256 _priceUsdE18) external {
         require(msg.sender == owner, "not owner");
-        uint160 sp = _writePrice(priceUsdE18);
-        emit PriceUpdated(priceUsdE18, sp);
+        uint160 sp = _writePrice(_priceUsdE18);
+        emit PriceUpdated(_priceUsdE18, sp);
     }
 
     // Convert a USD price to sqrtPriceX96, store it and the tick.
-    function _writePrice(uint256 priceUsdE18) internal returns (uint160 sp) {
-        require(priceUsdE18 > 0, "price=0");
+    function _writePrice(uint256 _priceUsdE18) internal returns (uint160 sp) {
+        require(_priceUsdE18 > 0, "price=0");
         sp = sqrtPriceX96For(
-            priceUsdE18, assetIsToken0, assetDecimals, stableDecimals
+            _priceUsdE18, assetIsToken0, assetDecimals, stableDecimals
         );
         sqrtPriceX96 = sp;
+        priceUsdE18 = _priceUsdE18; // direct value for on-chain NAV reads
         tick = int24(int256(uint256(sp) >> 96)); // coarse tick; readers use slot0
     }
 
@@ -112,7 +114,7 @@ contract MockUniswapV3Pool {
     /// sqrtPriceX96 = sqrt(ratio) * 2**96, computed as
     /// sqrt(ratio * 2**192) with a 256-bit-safe split of the shift.
     function sqrtPriceX96For(
-        uint256 priceUsdE18,
+        uint256 _priceUsdE18,
         bool _assetIsToken0,
         uint8 _assetDecimals,
         uint8 _stableDecimals
@@ -121,11 +123,11 @@ contract MockUniswapV3Pool {
         uint256 num;
         uint256 den;
         if (_assetIsToken0) {
-            num = priceUsdE18 * (10 ** _stableDecimals);
+            num = _priceUsdE18 * (10 ** _stableDecimals);
             den = 1e18 * (10 ** _assetDecimals);
         } else {
             num = 1e18 * (10 ** _assetDecimals);
-            den = priceUsdE18 * (10 ** _stableDecimals);
+            den = _priceUsdE18 * (10 ** _stableDecimals);
         }
         // sqrt(num/den) * 2**96 = sqrt(num * 2**192 / den). Shift by 2**96
         // twice, sqrt-ing after the first shift to stay inside 256 bits.

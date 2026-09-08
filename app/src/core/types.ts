@@ -98,6 +98,7 @@ export interface LiveIndex {
   notExecutable: boolean;
   nav?: number;
   ret?: number;
+  tvl?: number | null; // real deposited stablecoin in the vault, USD (on-chain)
   rank?: number;
   strategy?: string;
   strategyName?: string;

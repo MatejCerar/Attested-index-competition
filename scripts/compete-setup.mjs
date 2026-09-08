@@ -106,8 +106,8 @@ if (!PK) {
 }
 
 const {
-    JsonRpcProvider, Wallet, ContractFactory, AbiCoder, getBytes, keccak256,
-    verifyMessage, id: keccakId,
+    JsonRpcProvider, Wallet, Contract, ContractFactory, AbiCoder, getBytes,
+    keccak256, verifyMessage, id: keccakId,
 } = await import("ethers");
 const abi = AbiCoder.defaultAbiCoder();
 
@@ -147,10 +147,13 @@ async function main() {
 
     const usdcArt = artifact("MockUSDC");
     const poolArt = artifact("MockUniswapV3Pool");
-    const vaultArt = artifact("StableIndexVault");
+    const vaultArt = artifact("IndexShareVault"); // ABI to talk to created vaults
+    const factoryArt = artifact("VaultFactory");
     const usdcF = new ContractFactory(usdcArt.abi, usdcArt.bytecode, gov);
     const poolF = new ContractFactory(poolArt.abi, poolArt.bytecode, gov);
-    const vaultF = new ContractFactory(vaultArt.abi, vaultArt.bytecode, gov);
+    const factoryF = new ContractFactory(
+        factoryArt.abi, factoryArt.bytecode, gov
+    );
 
     // Resolve the FCC tee signer (the rebalancer for every vault).
     const probe = await teeSign(abi.encode(["bytes32"], [keccakId("probe")]));
@@ -161,6 +164,12 @@ async function main() {
     await usdc.waitForDeployment();
     const usdcAddr = await usdc.getAddress();
     console.log("MockUSDC:", usdcAddr);
+
+    // One factory: every index vault it mints shares the FCC signer + stable.
+    const factory = await factoryF.deploy(tee, usdcAddr);
+    await factory.waitForDeployment();
+    const factoryAddr = await factory.getAddress();
+    console.log("VaultFactory:", factoryAddr);
 
     // One pool per distinct asset symbol, seeded to its baseline price.
     const symbols = new Set();
@@ -180,13 +189,28 @@ async function main() {
             console.log(`  pool ${sym}: ${addr} seeded @ ${baseline(id, b.kind)}`);
         }
 
-    // One vault per index; deposit equal capital and take no fee here.
+    // One vault per index, minted by the factory over that index's pools (in
+    // weight order). Seed each with equal capital as the first deposit.
     const vaults = {};
     for (const b of FIELD) {
         const order = Object.keys(b.weights).map((id) => symOf(id, b.kind));
-        const vault = await vaultF.deploy(tee, usdcAddr, order.length);
-        await vault.waitForDeployment();
-        const vaultAddr = await vault.getAddress();
+        const poolAddrs = order.map((sym) => pools[sym]);
+        const tx = await factory.createVault(poolAddrs);
+        const rec = await tx.wait();
+        let vaultAddr;
+        for (const log of rec.logs) {
+            try {
+                const p = factory.interface.parseLog(log);
+                if (p && p.name === "VaultCreated") {
+                    vaultAddr = p.args.vault;
+                    break;
+                }
+            } catch {
+                /* not our event */
+            }
+        }
+        if (!vaultAddr) throw new Error(`no VaultCreated event for ${b.id}`);
+        const vault = new Contract(vaultAddr, vaultArt.abi, gov);
         await (await usdc.mint(gov.address, toUsdc(CAPITAL))).wait();
         await (await usdc.approve(vaultAddr, toUsdc(CAPITAL))).wait();
         await (await vault.deposit(toUsdc(CAPITAL))).wait();
@@ -199,6 +223,7 @@ async function main() {
         rpc: RPC,
         network: "Coston2 (chain 114)",
         stable: usdcAddr,
+        factory: factoryAddr,
         tee,
         capital: CAPITAL,
         pools,

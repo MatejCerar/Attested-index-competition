@@ -11,7 +11,13 @@ const API = import.meta.env.VITE_API_URL as string | undefined;
 export interface AddResult {
   ok: boolean;
   mode?: "chain" | "off-chain";
-  entry?: {id: string; rank: number; name: string; weekReturn: number};
+  entry?: {
+    id: string;
+    rank: number;
+    name: string;
+    weekReturn: number;
+    vault?: string; // the deployed index vault (when mode === "chain")
+  };
   error?: string;
 }
 

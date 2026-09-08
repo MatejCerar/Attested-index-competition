@@ -19,6 +19,7 @@ import {useQueryClient} from "@tanstack/react-query";
 import {Link} from "@tanstack/react-router";
 import {useMemo, useState} from "react";
 import {addBasket} from "@/core/add.ts";
+import {recordDeposit} from "@/core/cost-basis.ts";
 import {generateIndex} from "@/core/generate.ts";
 import {
   DEFAULT_STRATEGY,
@@ -220,10 +221,14 @@ export function BuildPage() {
           `It joins Live on the next engine tick.`,
       });
 
-      // On-chain deposit only for indices with a DEPLOYED vault (the 5 house
-      // indices). A user-submitted basket has no on-chain vault, so it stays
-      // off-chain (the server already scored it above): no fake deposit.
-      const vaultAddr = onchain?.vaults[basket.id]?.addr ?? null;
+      // Deposit YOUR 1000 mUSDC into the index's real vault - that is your
+      // position. The server just deployed a fresh vault for this index (mode
+      // "chain") and returns its address; prefer that, else fall back to a
+      // pre-known house vault. No real vault (off-chain) -> no deposit.
+      const vaultAddr =
+        (added.mode === "chain" ? added.entry?.vault : null) ??
+        onchain?.vaults[basket.id]?.addr ??
+        null;
       if (realWallet && vaultAddr) {
         const res = await depositOnChain({
           provider,
@@ -232,13 +237,17 @@ export function BuildPage() {
           amountUsdc: 1000,
           mode,
         });
+        if (res.ok && !res.mocked) recordDeposit(vaultAddr, 1000);
         notifications.show({
           color: res.ok ? "green" : "red",
-          title: res.ok ? "Deposited into the index vault" : "Deposit failed",
+          title: res.ok
+            ? "Deposited your 1000 into your index vault"
+            : "Deposit failed",
           message: res.ok
             ? res.mocked
               ? "Mocked (demo account, no chain)."
-              : `1000 mUSDC deposited on Coston2. tx ${res.txHash?.slice(0, 10)}...`
+              : `Your 1000 mUSDC is now your position in this index. ` +
+                `tx ${res.txHash?.slice(0, 10)}... See My positions.`
             : String(res.error),
         });
       }

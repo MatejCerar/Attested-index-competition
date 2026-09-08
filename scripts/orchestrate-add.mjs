@@ -58,39 +58,6 @@ const load = (n) => JSON.parse(readFileSync(join(__dirname, "abi", n), "utf8"));
 const isNonceErr = (e) =>
     /nonce|replacement|underpriced|already known/i.test(String(e?.message ?? e));
 
-// Send a contract-method tx, retrying on nonce/replacement races (the live
-// engine shares this key). Returns the mined receipt.
-async function sendTx(fn, tries = 6) {
-    let last;
-    for (let i = 0; i < tries; i++) {
-        try {
-            return await (await fn()).wait();
-        } catch (e) {
-            if (!isNonceErr(e)) throw e;
-            last = e;
-            await sleep(2500);
-        }
-    }
-    throw last;
-}
-
-// Deploy a contract, retrying on nonce/replacement races. Returns the contract.
-async function deployRetry(factory, args, tries = 6) {
-    let last;
-    for (let i = 0; i < tries; i++) {
-        try {
-            const c = await factory.deploy(...args);
-            await c.waitForDeployment();
-            return c;
-        } catch (e) {
-            if (!isNonceErr(e)) throw e;
-            last = e;
-            await sleep(2500);
-        }
-    }
-    throw last;
-}
-
 // Deploy (if needed) + register a real vault for one basket. opts:
 // {depositUsd, feeBps, priceFor, symFor} where priceFor/symFor take a catalog id.
 export async function scoreBasketOnChain(
@@ -124,69 +91,138 @@ export async function scoreBasketOnChain(
         return BigInt(Math.round(p * 1e18));
     });
 
-    // Pause the live engine's on-chain writes (it uses the same key) to avoid
-    // nonce collisions, then give it a moment to notice the lock before we send.
+    // Pause the live engine's on-chain writes (it shares this key), wait for its
+    // in-flight txs to settle, then drive our own txs with explicit,
+    // self-correcting nonces so the two processes never collide.
     writeFileSync(lockPath, String(Date.now()));
     await sleep(3000);
     try {
-    // Ensure a pool per asset, seeded to its catalog price.
-    const pools = {...(cfg.pools ?? {})};
-    const newPools = {};
-    for (let i = 0; i < ids.length; i++) {
-        const sym = order[i];
-        if (pools[sym]) continue;
-        const assetAddr = "0x" + keccak256(keccakId(sym)).slice(26);
-        const pool = await deployRetry(poolF, [assetAddr, cfg.stable, 18, 6, 3000]);
-        const addr = await pool.getAddress();
-        await sendTx(() => pool.seedPriceUsdE18(pricesE18[i]));
-        pools[sym] = addr;
-        newPools[sym] = addr;
-    }
-    const poolAddrs = order.map((sym) => pools[sym]);
-
-    // Mint the vault via the factory (shared stable + FCC signer).
-    const rec = await sendTx(() => factory.createVault(poolAddrs));
-    let vaultAddr;
-    for (const log of rec.logs) {
-        try {
-            const p = factory.interface.parseLog(log);
-            if (p && p.name === "VaultCreated") {
-                vaultAddr = p.args.vault;
+        // Wait until the account has no pending (in-flight) tx so our nonce base
+        // is clean. The engine is paused by the lock, so this settles fast.
+        let base;
+        for (let i = 0; i < 20; i++) {
+            const [pending, latest] = await Promise.all([
+                provider.getTransactionCount(gov.address, "pending"),
+                provider.getTransactionCount(gov.address, "latest"),
+            ]);
+            if (pending === latest) {
+                base = latest;
                 break;
             }
-        } catch {
-            /* not our event */
+            await sleep(1500);
         }
-    }
-    if (!vaultAddr) throw new Error("no VaultCreated event");
-    const vault = new Contract(vaultAddr, vaultArt.abi, gov);
+        let nonce =
+            base ?? (await provider.getTransactionCount(gov.address, "pending"));
 
-    // Seed initial capital + one FCC-signed rebalance (nonce 0).
-    await sendTx(() => usdc.mint(gov.address, toUsdc(depositUsd)));
-    await sendTx(() => usdc.approve(vaultAddr, toUsdc(depositUsd)));
-    const depRec = await sendTx(() => vault.deposit(toUsdc(depositUsd)));
-    const msg = abi.encode(
-        ["address", "uint256", "uint16[]", "uint256[]"],
-        [vaultAddr, 0, weightsBps, pricesE18]
-    );
-    const {sig} = await teeSign(msg);
-    const rebRec = await sendTx(() => vault.rebalance(weightsBps, pricesE18, sig));
+        // Send with an explicit sequential nonce; on any nonce/replacement race
+        // resync from the chain's pending count and retry the same step.
+        const send = async (build) => {
+            let last;
+            for (let i = 0; i < 8; i++) {
+                const n = nonce;
+                try {
+                    const rec = await (await build(n)).wait();
+                    nonce = n + 1;
+                    return rec;
+                } catch (e) {
+                    if (!isNonceErr(e)) throw e;
+                    last = e;
+                    await sleep(2000);
+                    nonce = await provider.getTransactionCount(
+                        gov.address,
+                        "pending"
+                    );
+                }
+            }
+            throw last;
+        };
+        const deploy = async (factory, args) => {
+            let last;
+            for (let i = 0; i < 8; i++) {
+                const n = nonce;
+                try {
+                    const c = await factory.deploy(...args, {nonce: n});
+                    await c.waitForDeployment();
+                    nonce = n + 1;
+                    return c;
+                } catch (e) {
+                    if (!isNonceErr(e)) throw e;
+                    last = e;
+                    await sleep(2000);
+                    nonce = await provider.getTransactionCount(
+                        gov.address,
+                        "pending"
+                    );
+                }
+            }
+            throw last;
+        };
 
-    // Register the vault + new pools so the engine reads NAV and the FE can
-    // deposit. Re-read the file first to avoid clobbering a concurrent write.
-    const live = JSON.parse(readFileSync(cfgPath, "utf8"));
-    live.pools = {...(live.pools ?? {}), ...newPools};
-    live.vaults = {...(live.vaults ?? {}), [basket.id]: {addr: vaultAddr, order}};
-    live.generatedAt = new Date().toISOString();
-    writeFileSync(cfgPath, JSON.stringify(live, null, 2) + "\n");
+        // Ensure a pool per asset, seeded to its catalog price.
+        const pools = {...(cfg.pools ?? {})};
+        const newPools = {};
+        for (let i = 0; i < ids.length; i++) {
+            const sym = order[i];
+            if (pools[sym]) continue;
+            const assetAddr = "0x" + keccak256(keccakId(sym)).slice(26);
+            const pool = await deploy(poolF, [assetAddr, cfg.stable, 18, 6, 3000]);
+            const addr = await pool.getAddress();
+            await send((n) => pool.seedPriceUsdE18(pricesE18[i], {nonce: n}));
+            pools[sym] = addr;
+            newPools[sym] = addr;
+        }
+        const poolAddrs = order.map((sym) => pools[sym]);
 
-    return {
-        vault: vaultAddr,
-        order,
-        stable: cfg.stable,
-        depositTx: depRec.hash,
-        rebalanceTx: rebRec.hash,
-    };
+        // Mint the vault via the factory (shared stable + FCC signer).
+        const rec = await send((n) => factory.createVault(poolAddrs, {nonce: n}));
+        let vaultAddr;
+        for (const log of rec.logs) {
+            try {
+                const p = factory.interface.parseLog(log);
+                if (p && p.name === "VaultCreated") {
+                    vaultAddr = p.args.vault;
+                    break;
+                }
+            } catch {
+                /* not our event */
+            }
+        }
+        if (!vaultAddr) throw new Error("no VaultCreated event");
+        const vault = new Contract(vaultAddr, vaultArt.abi, gov);
+
+        // Seed initial capital + one FCC-signed rebalance (nonce 0).
+        await send((n) => usdc.mint(gov.address, toUsdc(depositUsd), {nonce: n}));
+        await send((n) => usdc.approve(vaultAddr, toUsdc(depositUsd), {nonce: n}));
+        const depRec = await send((n) =>
+            vault.deposit(toUsdc(depositUsd), {nonce: n})
+        );
+        const msg = abi.encode(
+            ["address", "uint256", "uint16[]", "uint256[]"],
+            [vaultAddr, 0, weightsBps, pricesE18]
+        );
+        const {sig} = await teeSign(msg);
+        const rebRec = await send((n) =>
+            vault.rebalance(weightsBps, pricesE18, sig, {nonce: n})
+        );
+
+        // Register the vault + new pools so the engine reads NAV and the FE can
+        // deposit. Re-read first to avoid clobbering a concurrent write.
+        const liveCfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+        liveCfg.pools = {...(liveCfg.pools ?? {}), ...newPools};
+        liveCfg.vaults = {
+            ...(liveCfg.vaults ?? {}),
+            [basket.id]: {addr: vaultAddr, order},
+        };
+        liveCfg.generatedAt = new Date().toISOString();
+        writeFileSync(cfgPath, JSON.stringify(liveCfg, null, 2) + "\n");
+
+        return {
+            vault: vaultAddr,
+            order,
+            stable: cfg.stable,
+            depositTx: depRec.hash,
+            rebalanceTx: rebRec.hash,
+        };
     } finally {
         try {
             unlinkSync(lockPath);

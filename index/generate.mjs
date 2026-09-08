@@ -10,6 +10,9 @@ import {STRATEGIES} from "./strategies.mjs";
 import {candidatesForPrompt, assetIndex} from "./catalog.mjs";
 
 const MODEL = "claude-haiku-4-5-20251001";
+// API model id (bare alias, no date suffix) used by the headless Anthropic API
+// path. Same tier as the CLI model above.
+const API_MODEL = "claude-haiku-4-5";
 const DISALLOWED = ["WebFetch", "WebSearch", "Bash"];
 const STRATEGY_IDS = Object.keys(STRATEGIES);
 const DEFAULT_STRATEGY = STRATEGY_IDS.includes("hourly-or-drift")
@@ -78,11 +81,61 @@ function runClaude(prompt, timeoutMs) {
     });
 }
 
+// Headless generation via the Anthropic Messages API. Used on servers/containers
+// with no `claude` CLI. Enabled by setting ANTHROPIC_API_KEY. Raw fetch (Node 22
+// has global fetch) keeps this file dependency-free so the server needs no extra
+// install. Returns the same {ok, out|err} shape as runClaude.
+async function runClaudeApi(prompt, timeoutMs) {
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!key) return {ok: false, err: "no ANTHROPIC_API_KEY"};
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            body: JSON.stringify({
+                model: process.env.ANTHROPIC_MODEL || API_MODEL,
+                max_tokens: 1024,
+                messages: [{role: "user", content: prompt}],
+            }),
+            signal: ctrl.signal,
+        });
+        if (!r.ok) {
+            const body = await r.text().catch(() => "");
+            return {ok: false, err: `http ${r.status} ${body.slice(0, 200)}`};
+        }
+        const data = await r.json();
+        const out = (data.content || [])
+            .filter((b) => b.type === "text")
+            .map((b) => b.text)
+            .join("");
+        if (!out) return {ok: false, err: "empty response"};
+        return {ok: true, out};
+    } catch (e) {
+        return {ok: false, err: e.name === "AbortError" ? "timeout" : String(e)};
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+// Prefer the API path when a key is configured (headless/server), else fall back
+// to the local `claude` CLI (dev machines with an interactive login).
+function callModel(prompt, timeoutMs) {
+    return process.env.ANTHROPIC_API_KEY
+        ? runClaudeApi(prompt, timeoutMs)
+        : runClaude(prompt, timeoutMs);
+}
+
 // Generate fresh weights for one index from its prompt, restricted to the RWA
 // catalog. Never throws; falls back to the index's last-good weights.
 export async function generateWeights(index, {timeoutMs = 45000, limit = 60} = {}) {
     const cands = candidatesForPrompt(index.prompt, {limit});
-    const res = await runClaude(buildIndexPrompt(index.prompt, cands), timeoutMs);
+    const res = await callModel(buildIndexPrompt(index.prompt, cands), timeoutMs);
     if (!res.ok) {
         console.error(
             `[gen] ${index.id}: live-gen unavailable (${res.err}), using fallback`
@@ -196,7 +249,7 @@ export function validateIndex(parsed, cands, byId = assetIndex()) {
 // shortlist. Never throws: on any failure returns FALLBACK_INDEX.
 export async function generateIndex(prompt, {timeoutMs = 45000, limit = 60} = {}) {
     const cands = candidatesForPrompt(prompt, {limit});
-    const res = await runClaude(buildIndexPrompt(prompt, cands), timeoutMs);
+    const res = await callModel(buildIndexPrompt(prompt, cands), timeoutMs);
     if (!res.ok) {
         console.error(`[gen] index: live-gen unavailable (${res.err}), using fallback`);
         return {...FALLBACK_INDEX};

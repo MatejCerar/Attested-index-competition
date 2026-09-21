@@ -23,7 +23,7 @@ const BASE = {
 export const ATTESTED_INDICES = [
     {
         id: "attested-quality",
-        name: "Attested Quality Large Caps",
+        name: "Quality Large Caps",
         prompt: "Quality-tilted large caps: profitability, margins, moat, low leverage.",
         strategy: "thirty-minute-or-drift-5",
         config: {
@@ -42,7 +42,7 @@ export const ATTESTED_INDICES = [
     },
     {
         id: "attested-ai-leaders",
-        name: "Attested AI Leaders",
+        name: "AI Leaders",
         prompt: "AI exposure inside tech and communication services, growth and momentum tilted.",
         strategy: "minute",
         config: {
@@ -61,7 +61,7 @@ export const ATTESTED_INDICES = [
     },
     {
         id: "attested-value",
-        name: "Attested Value",
+        name: "Value",
         prompt: "Cheap cash flows: low multiples, high FCF and dividend yield.",
         strategy: "ten-minute-or-drift-2",
         config: {
@@ -79,7 +79,7 @@ export const ATTESTED_INDICES = [
     },
     {
         id: "attested-low-vol",
-        name: "Attested Low Volatility",
+        name: "Low Volatility",
         prompt: "Defensive sleeve: low volatility, durable demand, clean balance sheets.",
         strategy: "hourly-or-drift-5",
         config: {
@@ -98,7 +98,7 @@ export const ATTESTED_INDICES = [
     },
     {
         id: "attested-momentum",
-        name: "Attested Momentum",
+        name: "Momentum",
         prompt: "12-month winners with growth support, rank-normalized.",
         strategy: "drift-5",
         config: {

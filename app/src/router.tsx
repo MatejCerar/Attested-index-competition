@@ -8,6 +8,7 @@ import {BuildPage} from "@/routes/build.tsx";
 import {LeaderboardPage} from "@/routes/leaderboard.tsx";
 import {LivePage} from "@/routes/live.tsx";
 import {PortfolioPage} from "@/routes/portfolio.tsx";
+import {UniversePage} from "@/routes/universe.tsx";
 
 const rootRoute = createRootRoute({component: RootLayout});
 
@@ -15,6 +16,12 @@ const buildRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: BuildPage,
+});
+
+const universeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/universe",
+  component: UniversePage,
 });
 
 const leaderboardRoute = createRoute({
@@ -37,6 +44,7 @@ const portfolioRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   buildRoute,
+  universeRoute,
   leaderboardRoute,
   liveRoute,
   portfolioRoute,

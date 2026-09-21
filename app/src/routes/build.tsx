@@ -354,7 +354,12 @@ export function BuildPage() {
           Autonomous AI indices on Flare. Define the index as a config - signed
           factor weights, eligibility filters, caps, normalization - and the
           deterministic builder computes the holdings. Same config + same frozen
-          feature matrix, same index, byte for byte.
+          feature matrix, same index, byte for byte. Prefer to hand-pick assets?
+          Browse the{" "}
+          <Text component={Link} to="/universe" span c="inherit" td="underline">
+            Universe
+          </Text>{" "}
+          and build a basket by hand.
         </Text>
       </div>
 

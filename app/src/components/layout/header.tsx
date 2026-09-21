@@ -7,6 +7,7 @@ import {useWallet} from "@/core/wallet-context.tsx";
 
 const NAV = [
   {to: "/", label: "Build"},
+  {to: "/universe", label: "Universe"},
   {to: "/leaderboard", label: "Leaderboard"},
   {to: "/live", label: "Live"},
   {to: "/portfolio", label: "My positions"},

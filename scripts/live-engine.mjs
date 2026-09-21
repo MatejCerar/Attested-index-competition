@@ -715,9 +715,13 @@ async function main() {
     // capital, take the per-leg baseline for chart change.
     let px = await fetchTick();
     if (onChainNow) {
-        refreshChainCfg();
-        const oc = await pushPricesOnChain(px);
-        px = {...px, ...oc};
+        try {
+            refreshChainCfg();
+            const oc = await pushPricesOnChain(px);
+            px = {...px, ...oc};
+        } catch (e) {
+            console.error(`t0 on-chain push failed, continuing off-chain:`, e?.message ?? e);
+        }
     }
     for (const b of field) baselineIndex(b, px);
     const sampleSym = field[0].legs[0].symbol;
@@ -728,6 +732,7 @@ async function main() {
     while (!stopping) {
         await sleep(TICK_MS);
         if (stopping) break;
+        try {
         let tickPx = await fetchTick();
         if (onChainNow) {
             refreshChainCfg();
@@ -759,6 +764,9 @@ async function main() {
         const scored = snapshot(tickPx);
         const lead = scored.slice(0, 3).map((r) => `${r.rank}.${r.name} ${pctS(r.ret)}`).join("   ");
         console.log(`[${new Date().toISOString().slice(11, 19)}] ${lead}`);
+        } catch (e) {
+            console.error(`tick failed, continuing next tick:`, e?.message ?? e);
+        }
     }
     console.log("stopped. live.json + leaderboard.json left in place.");
 }
@@ -771,6 +779,11 @@ function shutdown() {
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+// A transient RPC 503 or a stray async rejection must never kill the engine:
+// log and keep ticking so the board stays live.
+process.on("unhandledRejection", (e) =>
+    console.error("unhandledRejection (continuing):", e?.message ?? e)
+);
 
 main().catch((e) => {
     console.error(e);

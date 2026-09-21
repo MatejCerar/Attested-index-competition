@@ -6,6 +6,8 @@
 //     the Uniswap price source (mock pools seeded from the catalog), upsert into
 //     leaderboard.json and re-rank. With PK + TEE_SIGN_URL set it does the real
 //     Coston2 deposit + FCC-signed rebalance and records tx hashes.
+//   POST /api/build {config} -> deterministic build over the frozen feature
+//     matrix (same code the enclave runs); backs the frontend VITE_BUILD_URL.
 //   GET /api/leaderboard -> current leaderboard.json.
 // Runnable offline (seeded prices); real chain optional via env.
 import {createServer} from "node:http";
@@ -17,6 +19,13 @@ import {generateIndex} from "../index/generate.mjs";
 import {STRATEGIES, getStrategy} from "../index/strategies.mjs";
 import {weightsToBps} from "../index/weights.mjs";
 import {assetIndex} from "../index/catalog.mjs";
+import {
+    buildIndex,
+    buildIndexBps,
+    parseCsv,
+    loadMatrixCsv,
+    matrixHash,
+} from "../index/build-index.mjs";
 import {scoreBasketOnChain} from "./orchestrate-add.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -268,6 +277,43 @@ async function handleAdd(req, res) {
     send(res, 200, {entry, mode: onchain ? "chain" : "off-chain"});
 }
 
+// Fill FE-omitted columns with the house defaults; the FE config editor sends
+// no id_col/sector_col/market_cap_col and may add competitive_position.
+const CONFIG_DEFAULTS = {
+    id_col: "ticker",
+    sector_col: "sector",
+    market_cap_col: "market_cap_usd",
+};
+
+// POST /api/build {config} -> deterministic build over the frozen matrix using
+// the SAME module the enclave gate runs. competitive_position (an FE-side
+// eligibility extension) is applied as a row pre-filter, matching the
+// in-browser fallback in app/src/core/build-index.ts.
+async function handleBuild(req, res) {
+    const body = await readBody(req);
+    const raw = body && body.config;
+    if (!raw || typeof raw !== "object") return send(res, 400, {error: "config required"});
+    const {competitive_position, ...rest} = raw;
+    const config = {...CONFIG_DEFAULTS, ...rest};
+    const csv = loadMatrixCsv();
+    let rows = parseCsv(csv);
+    if (Array.isArray(competitive_position) && competitive_position.length)
+        rows = rows.filter((r) => competitive_position.includes(r.competitive_position));
+    try {
+        const entries = buildIndex(rows, config);
+        const {tickers, weightsBps} = buildIndexBps(rows, config);
+        send(res, 200, {
+            weightsBps,
+            ids: tickers,
+            weightsPct: weightsBps.map((b) => b / 100),
+            entries,
+            provenance: {configVersion: config.version ?? null, matrixHash: matrixHash(csv)},
+        });
+    } catch (e) {
+        send(res, 400, {error: e instanceof Error ? e.message : String(e)});
+    }
+}
+
 const server = createServer(async (req, res) => {
     try {
         if (req.method === "OPTIONS") {
@@ -280,6 +326,8 @@ const server = createServer(async (req, res) => {
             return handleGenerate(req, res);
         if (req.method === "POST" && url.pathname === "/api/add")
             return handleAdd(req, res);
+        if (req.method === "POST" && url.pathname === "/api/build")
+            return handleBuild(req, res);
         if (req.method === "GET" && url.pathname === "/api/leaderboard")
             return send(res, 200, readJson(leaderboardPath, {indices: []}));
         if (req.method === "GET" && url.pathname === "/api/live")

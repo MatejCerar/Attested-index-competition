@@ -3,11 +3,15 @@ import {
   Badge,
   Button,
   Card,
+  Divider,
   Grid,
   Group,
   Loader,
+  MultiSelect,
   NumberInput,
+  SegmentedControl,
   Select,
+  Slider,
   Stack,
   Text,
   Textarea,
@@ -17,8 +21,18 @@ import {
 import {notifications} from "@mantine/notifications";
 import {useQueryClient} from "@tanstack/react-query";
 import {Link} from "@tanstack/react-router";
-import {useMemo, useState} from "react";
+import {useEffect, useMemo, useState} from "react";
 import {addBasket} from "@/core/add.ts";
+import {
+  COMPETITIVE_POSITIONS,
+  GICS_SECTORS,
+  HOUSE_CONFIG,
+  SCORING_FEATURES,
+  previewIndex,
+  weightsToUnits,
+  type IndexConfig,
+  type IndexEntry,
+} from "@/core/build-index.ts";
 import {recordDeposit} from "@/core/cost-basis.ts";
 import {generateIndex} from "@/core/generate.ts";
 import {
@@ -28,17 +42,17 @@ import {
   strategyName,
   type StrategyGroup,
 } from "@/core/strategies.ts";
-import type {CatalogAsset, UserBasket} from "@/core/types.ts";
+import type {BasketConfig, CatalogAsset, UserBasket} from "@/core/types.ts";
 import {depositOnChain, mintTestUsd} from "@/core/evm-seam.ts";
 import {useCatalog} from "@/core/use-data.ts";
 import {useOnchain} from "@/core/use-onchain.ts";
 import {useWallet} from "@/core/wallet-context.tsx";
 
-const usd = (x: number | null) =>
-  x == null ? "-" : `$${x.toLocaleString(undefined, {maximumFractionDigits: x < 10 ? 4 : 2})}`;
 const short = (a?: string) => (a ? `${a.slice(0, 6)}...${a.slice(-4)}` : "your wallet");
 const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "index";
+const titleCase = (s: string) =>
+  s.split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
 
 // Strategy picker options grouped by intervals / harnesses / combined.
 const STRATEGY_SELECT_DATA = (["intervals", "harnesses", "combined"] as StrategyGroup[]).map(
@@ -63,6 +77,30 @@ const PROMPT_TEMPLATES = [
   "High-dividend blue chips",
 ];
 
+const SECTOR_OPTIONS = GICS_SECTORS.map((s) => ({value: s, label: titleCase(s)}));
+const POSITION_OPTIONS = COMPETITIVE_POSITIONS.map((p) => ({value: p, label: titleCase(p)}));
+const FEATURE_GROUPS = ["Value", "Yield", "Growth", "Quality", "Momentum", "AI-scored"];
+
+// One resulting holding, as shown in the output panel and submitted on add.
+interface ResultLeg {
+  key: string; // matrix ticker or catalog id
+  ticker: string;
+  sector?: string;
+  pct: number; // integer percent, sums to 100 across mapped legs
+  catalogId: string | null; // null = not in the RWA catalog, dropped on submit
+}
+
+// Map a matrix ticker (NVDA) to a priceable catalog asset id, trying the
+// common tokenized-equity naming (NVDA, NVDAx, NVDAon, bNVDA, aNVDA).
+function mapTicker(t: string, byTicker: Map<string, CatalogAsset>): string | null {
+  const cands = [t, `${t}x`, `${t}on`, `b${t}`, `a${t}`];
+  for (const c of cands) {
+    const a = byTicker.get(c.toLowerCase());
+    if (a) return a.id;
+  }
+  return null;
+}
+
 export function BuildPage() {
   const {data: catalog, isLoading} = useCatalog();
   const {data: onchain} = useOnchain();
@@ -77,16 +115,19 @@ export function BuildPage() {
   // A real wallet (not the mock demo) that can sign Coston2 txs.
   const realWallet = connected && mode === "injected" && provider != null;
 
-  // Builder state.
-  const [picked, setPicked] = useState<Record<string, number>>({});
+  // The index definition: a config, not typed percentages.
+  const [cfg, setCfg] = useState<IndexConfig>(() => structuredClone(HOUSE_CONFIG));
+  const [entries, setEntries] = useState<IndexEntry[]>([]);
+  const [previewSource, setPreviewSource] = useState<"server" | "browser">("browser");
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  // Prompt-generated weights (catalog ids -> pct) override the config output.
+  const [promptWeights, setPromptWeights] = useState<Record<string, number> | null>(null);
   const [name, setName] = useState("");
   const [thesis, setThesis] = useState("");
   const [strategy, setStrategy] = useState<string>(DEFAULT_STRATEGY);
   const [built, setBuilt] = useState<UserBasket[]>([]);
-
-  // Universe filters.
-  const [q, setQ] = useState("");
-  const [fclass, setFclass] = useState<string | null>("");
   const [genPrompt, setGenPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
 
@@ -94,50 +135,70 @@ export function BuildPage() {
     if (!catalog) return [];
     return catalog.assets.map((a) => ({...a, kind: "rwa" as const}));
   }, [catalog]);
-
   const byId = useMemo(() => new Map(allAssets.map((a) => [a.id, a])), [allAssets]);
+  const byTicker = useMemo(() => {
+    const m = new Map<string, CatalogAsset>();
+    for (const a of allAssets) {
+      if (a.priceSource && !m.has(a.ticker.toLowerCase())) m.set(a.ticker.toLowerCase(), a);
+    }
+    return m;
+  }, [allAssets]);
 
-  const filtered = useMemo(() => {
-    const ql = q.trim().toLowerCase();
-    return allAssets
-      .filter((a) => {
-        if (!a.priceSource) return false; // priceable RWA only
-        if (fclass && a.assetClass !== fclass) return false;
-        if (ql) {
-          const hay = `${a.ticker} ${a.name} ${a.issuerName}`.toLowerCase();
-          if (!hay.includes(ql)) return false;
-        }
-        return true;
-      })
-      .slice(0, 200);
-  }, [allAssets, q, fclass]);
+  // Recompute the resulting weights from the config, debounced. Server build
+  // when VITE_BUILD_URL is set, in-browser deterministic port otherwise.
+  useEffect(() => {
+    let live = true;
+    setPreviewBusy(true);
+    const t = setTimeout(async () => {
+      const res = await previewIndex(cfg);
+      if (!live) return;
+      setEntries(res.entries);
+      setPreviewSource(res.source);
+      setPreviewError(res.ok ? null : (res.error ?? "build failed"));
+      setPreviewBusy(false);
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [cfg]);
 
-  const total = Object.values(picked).reduce((a, v) => a + (Number(v) || 0), 0);
-  const canSubmit = total === 100 && Object.keys(picked).length > 0 && name.trim().length > 0;
+  // The output legs: config-computed (mapped to catalog assets) or, if a
+  // prompt generation is active, its catalog-id weights verbatim.
+  const legs = useMemo<ResultLeg[]>(() => {
+    if (promptWeights) {
+      return Object.entries(promptWeights).map(([id, pct]) => ({
+        key: id,
+        ticker: byId.get(id)?.ticker ?? id,
+        pct,
+        catalogId: id,
+      }));
+    }
+    if (!entries.length) return [];
+    const mapped = entries.map((e) => ({e, catalogId: mapTicker(e.id, byTicker)}));
+    const inCat = mapped.filter((m) => m.catalogId);
+    const pcts = inCat.length
+      ? weightsToUnits(inCat.map((m) => m.e.id), inCat.map((m) => m.e.weight), 100)
+      : [];
+    const pctById = new Map(inCat.map((m, i) => [m.e.id, pcts[i]]));
+    return mapped.map(({e, catalogId}) => ({
+      key: e.id,
+      ticker: e.id,
+      sector: e.sector,
+      pct: catalogId ? (pctById.get(e.id) ?? 0) : Math.round(e.weight * 100),
+      catalogId,
+    }));
+  }, [promptWeights, entries, byId, byTicker]);
 
-  const addAsset = (id: string) => {
-    if (id in picked) return;
-    const ids = [...Object.keys(picked), id];
-    setPicked(evenWeights(ids));
-  };
-  const removeAsset = (id: string) => {
-    const {[id]: _, ...rest} = picked;
-    setPicked(rest);
-  };
-  const setWeight = (id: string, w: number) => setPicked((p) => ({...p, [id]: w}));
+  const submitLegs = legs.filter((l) => l.catalogId && l.pct > 0);
+  const unmapped = promptWeights ? [] : legs.filter((l) => !l.catalogId);
+  const canSubmit = submitLegs.length > 0 && name.trim().length > 0 && !previewBusy;
 
-  const equalWeight = () => setPicked(evenWeights(Object.keys(picked)));
-  const normalize = () => {
-    if (total <= 0) return equalWeight();
-    const ids = Object.keys(picked);
-    let acc = 0;
-    const out: Record<string, number> = {};
-    ids.forEach((id, i) => {
-      const w = i === ids.length - 1 ? 100 - acc : Math.round((picked[id] / total) * 100);
-      out[id] = w;
-      acc += w;
-    });
-    setPicked(out);
+  const setWeight = (feat: string, w: number) =>
+    setCfg((c) => ({...c, weights: {...c.weights, [feat]: w}}));
+  const resetConfig = () => {
+    setCfg(structuredClone(HOUSE_CONFIG));
+    setPromptWeights(null);
   };
 
   const runMint = async () => {
@@ -164,7 +225,7 @@ export function BuildPage() {
     setGenerating(true);
     try {
       const g = await generateIndex(genPrompt.trim(), catalog);
-      setPicked(g.weights);
+      setPromptWeights(g.weights);
       setName(g.name);
       setThesis(g.rationale || genPrompt.trim());
       setStrategy(g.strategy);
@@ -181,13 +242,34 @@ export function BuildPage() {
 
   const submit = async () => {
     if (!canSubmit || submitting) return;
+    const weights: Record<string, number> = {};
+    for (const l of submitLegs) weights[l.catalogId!] = l.pct;
+    // Config-built baskets carry the full definition, not just percentages.
+    const basketConfig: BasketConfig | undefined = promptWeights
+      ? undefined
+      : {
+          configVersion: cfg.version,
+          weights: {...cfg.weights},
+          normalization: cfg.normalization,
+          winsor: cfg.winsor,
+          weighting: cfg.weighting,
+          topN: cfg.top_n,
+          maxWeight: cfg.max_weight,
+          sectorCap: cfg.sector_cap,
+          eligibleSectors: [...cfg.eligible_sectors],
+          minMarketCapUsd: cfg.min_market_cap_usd,
+          competitivePosition: cfg.competitive_position.length
+            ? [...cfg.competitive_position]
+            : undefined,
+        };
     const basket: UserBasket = {
       id: slug(name),
       name: name.trim(),
       prompt: thesis.trim() || name.trim(),
       kind: "rwa",
       strategy,
-      weights: {...picked},
+      weights,
+      ...(basketConfig ? {config: basketConfig} : {}),
     };
 
     setSubmitting(true);
@@ -253,10 +335,10 @@ export function BuildPage() {
         });
       }
 
-      setPicked({});
       setName("");
       setThesis("");
       setStrategy(DEFAULT_STRATEGY);
+      setPromptWeights(null);
     } finally {
       setSubmitting(false);
     }
@@ -269,9 +351,10 @@ export function BuildPage() {
       <div>
         <Title order={1}>Build an index</Title>
         <Text c="dimmed">
-          Autonomous AI indices on Flare. Pick from ~1,300 priceable tokenized
-          real-world assets, set weights, choose a rebalance strategy, and enter
-          the competition.
+          Autonomous AI indices on Flare. Define the index as a config - signed
+          factor weights, eligibility filters, caps, normalization - and the
+          deterministic builder computes the holdings. Same config + same frozen
+          feature matrix, same index, byte for byte.
         </Text>
       </div>
 
@@ -308,65 +391,188 @@ export function BuildPage() {
         </Group>
         <Text size="note" c="dimmed" mt={6}>
           Produces a whole index (name, thesis, assets, weights, strategy) chosen
-          only from the catalog, then pre-fills the builder below.
+          only from the catalog and fills the output panel directly, bypassing
+          the config. Clear it to go back to config-computed weights.
         </Text>
       </Card>
 
       <Grid gutter="lg">
         <Grid.Col span={{base: 12, md: 7}}>
           <Card withBorder radius="md">
-            <Text fw={600} mb="xs">
-              Universe {catalog ? `(${catalog.priceable.toLocaleString()} priceable RWA)` : ""}
+            <Group justify="space-between" mb="xs">
+              <Text fw={600}>Index config (v{cfg.version})</Text>
+              <Button size="compact-xs" variant="default" onClick={resetConfig}>
+                Reset to house config
+              </Button>
+            </Group>
+            <Text size="note" c="dimmed" mb="sm">
+              Signed factor weights: positive means higher is better, negative
+              means lower is better (valuation multiples, leverage, volatility,
+              regulatory risk). The composite score ranks the universe.
             </Text>
-            <Group mb="sm">
-              <TextInput
-                flex={1}
-                placeholder="Search ticker, name or issuer (TSLA, gold, ondo)"
-                value={q}
-                onChange={(e) => setQ(e.currentTarget.value)}
+
+            {FEATURE_GROUPS.map((g) => (
+              <div key={g}>
+                <Text size="note" fw={600} tt="uppercase" c="dimmed" mt="xs" mb={4}>
+                  {g}
+                </Text>
+                {SCORING_FEATURES.filter((f) => f.group === g).map((f) => {
+                  const w = cfg.weights[f.name] ?? 0;
+                  return (
+                    <Group key={f.name} gap="sm" wrap="nowrap" mb={6}>
+                      <div style={{width: 170, flexShrink: 0}}>
+                        <Text size="sm" truncate>
+                          {f.label}
+                        </Text>
+                        <Text size="note" c="dimmed">
+                          {f.kind === "score" ? "AI-scored 0..5" : "data feed"}
+                          {f.lowerIsBetter ? ", lower is better" : ""}
+                        </Text>
+                      </div>
+                      <Slider
+                        flex={1}
+                        min={-0.2}
+                        max={0.2}
+                        step={0.005}
+                        value={w}
+                        onChange={(v) => setWeight(f.name, Number(v.toFixed(3)))}
+                        label={(v) => `${v > 0 ? "+" : ""}${v.toFixed(3)}`}
+                        marks={[{value: 0}]}
+                        color={w < 0 ? "red" : "green"}
+                      />
+                      <Text
+                        size="sm"
+                        fw={700}
+                        w={56}
+                        ta="right"
+                        c={w < 0 ? "red" : w > 0 ? "green" : "dimmed"}
+                        style={{flexShrink: 0, fontVariantNumeric: "tabular-nums"}}
+                      >
+                        {w > 0 ? "+" : ""}
+                        {w.toFixed(3)}
+                      </Text>
+                    </Group>
+                  );
+                })}
+              </div>
+            ))}
+
+            <Divider my="sm" />
+            <Text fw={600} size="sm" mb={6}>
+              Eligibility filters
+            </Text>
+            <MultiSelect
+              label="Eligible sectors (GICS)"
+              description="Empty allows all 11 sectors"
+              data={SECTOR_OPTIONS}
+              value={cfg.eligible_sectors}
+              onChange={(v) => setCfg((c) => ({...c, eligible_sectors: v}))}
+              clearable
+              mb="xs"
+            />
+            <Group grow mb="xs">
+              <NumberInput
+                label="Min market cap"
+                value={cfg.min_market_cap_usd / 1e9}
+                onChange={(v) =>
+                  setCfg((c) => ({...c, min_market_cap_usd: Math.max(0, Number(v) || 0) * 1e9}))
+                }
+                min={0}
+                step={10}
+                prefix="$"
+                suffix="B"
               />
-              <Select
-                data={[
-                  {value: "", label: "All classes"},
-                  ...(catalog?.classes ?? []).map((c) => ({value: c, label: c})),
-                ]}
-                value={fclass}
-                onChange={setFclass}
-                w={180}
+              <MultiSelect
+                label="Competitive position"
+                description="Optional; empty allows all"
+                data={POSITION_OPTIONS}
+                value={cfg.competitive_position}
+                onChange={(v) => setCfg((c) => ({...c, competitive_position: v}))}
+                clearable
               />
             </Group>
-            <Stack gap={4} mah="55vh" style={{overflowY: "auto"}}>
-              {filtered.map((a) => (
-                <Group key={a.id} justify="space-between" wrap="nowrap">
-                  <div style={{minWidth: 0}}>
-                    <Group gap={6}>
-                      <Text fw={600} truncate>
-                        {a.ticker}
-                      </Text>
-                      <Badge size="xs" variant="light" color="grape">
-                        {a.assetClass}
-                      </Badge>
-                    </Group>
-                    <Text size="note" c="dimmed" truncate>
-                      {a.name} - {a.issuerName}
-                    </Text>
-                  </div>
-                  <Group gap="sm" wrap="nowrap">
-                    <Text size="note" c="dimmed">
-                      {usd(a.priceUsd)}
-                    </Text>
-                    <Button
-                      size="compact-xs"
-                      variant="light"
-                      disabled={a.id in picked}
-                      onClick={() => addAsset(a.id)}
-                    >
-                      {a.id in picked ? "added" : "+ add"}
-                    </Button>
-                  </Group>
-                </Group>
-              ))}
-            </Stack>
+
+            <Divider my="sm" />
+            <Text fw={600} size="sm" mb={6}>
+              Selection and caps
+            </Text>
+            <Group grow mb="xs">
+              <NumberInput
+                label="Top N names"
+                value={cfg.top_n}
+                onChange={(v) => setCfg((c) => ({...c, top_n: Math.max(1, Math.round(Number(v) || 1))}))}
+                min={1}
+                max={50}
+              />
+              <NumberInput
+                label="Max weight per name"
+                value={Math.round(cfg.max_weight * 100)}
+                onChange={(v) =>
+                  setCfg((c) => ({
+                    ...c,
+                    max_weight: Math.min(100, Math.max(1, Number(v) || 1)) / 100,
+                  }))
+                }
+                min={1}
+                max={100}
+                suffix="%"
+              />
+              <NumberInput
+                label="Sector cap"
+                value={Math.round(cfg.sector_cap * 100)}
+                onChange={(v) =>
+                  setCfg((c) => ({
+                    ...c,
+                    sector_cap: Math.min(100, Math.max(1, Number(v) || 1)) / 100,
+                  }))
+                }
+                min={1}
+                max={100}
+                suffix="%"
+              />
+            </Group>
+
+            <Divider my="sm" />
+            <Group grow>
+              <div>
+                <Text size="sm" fw={500} mb={4}>
+                  Normalization
+                </Text>
+                <SegmentedControl
+                  fullWidth
+                  size="xs"
+                  data={[
+                    {value: "zscore", label: "z-score"},
+                    {value: "rank", label: "rank"},
+                    {value: "minmax", label: "min-max"},
+                  ]}
+                  value={cfg.normalization}
+                  onChange={(v) =>
+                    setCfg((c) => ({...c, normalization: v as IndexConfig["normalization"]}))
+                  }
+                />
+              </div>
+              <div>
+                <Text size="sm" fw={500} mb={4}>
+                  Weighting
+                </Text>
+                <SegmentedControl
+                  fullWidth
+                  size="xs"
+                  data={[
+                    {value: "score_tilt", label: "score tilt"},
+                    {value: "equal", label: "equal"},
+                  ]}
+                  value={cfg.weighting}
+                  onChange={(v) => setCfg((c) => ({...c, weighting: v as IndexConfig["weighting"]}))}
+                />
+              </div>
+            </Group>
+            <Text size="note" c="dimmed" mt="xs">
+              Features are winsorized at the {Math.round(cfg.winsor * 100)}th
+              percentile, normalized, and summed with the signed weights. Top N
+              by score, then per-name and per-sector caps by water-filling.
+            </Text>
           </Card>
         </Grid.Col>
 
@@ -376,13 +582,13 @@ export function BuildPage() {
               Your index
             </Text>
             <TextInput
-              placeholder="Index name (e.g. Mag-7 Tokenized)"
+              placeholder="Index name (e.g. Quality-Momentum 20)"
               value={name}
               onChange={(e) => setName(e.currentTarget.value)}
               mb="xs"
             />
             <Textarea
-              placeholder="Thesis: what is this index and why these weights?"
+              placeholder="Thesis: what is this index and why this config?"
               value={thesis}
               onChange={(e) => setThesis(e.currentTarget.value)}
               autosize
@@ -402,56 +608,78 @@ export function BuildPage() {
                 strategyName(strategy)}
             </Text>
 
-            {Object.keys(picked).length === 0 ? (
+            <Group justify="space-between" mb={4}>
+              <Text fw={600} size="sm">
+                Computed weights (output)
+              </Text>
+              <Group gap={6}>
+                {previewBusy && <Loader size={14} />}
+                <Badge size="xs" variant="light" color={promptWeights ? "grape" : "blue"}>
+                  {promptWeights
+                    ? "from prompt"
+                    : previewSource === "server"
+                      ? "built on server"
+                      : "built in browser"}
+                </Badge>
+                {promptWeights && (
+                  <Button size="compact-xs" variant="subtle" onClick={() => setPromptWeights(null)}>
+                    use config
+                  </Button>
+                )}
+              </Group>
+            </Group>
+            <Text size="note" c="dimmed" mb="xs">
+              Weights are computed from the config, not typed. Change the config
+              and the holdings recompute.
+            </Text>
+
+            {previewError && !promptWeights ? (
+              <Alert color="yellow" variant="light" mb="sm">
+                {previewError}
+              </Alert>
+            ) : legs.length === 0 ? (
               <Text size="note" c="dimmed" py="sm">
-                No assets yet. Add from the universe, or generate from a prompt.
+                No holdings yet. Adjust the config, or generate from a prompt.
               </Text>
             ) : (
-              <Stack gap={6} mb="sm">
-                {Object.keys(picked).map((id) => {
-                  const a = byId.get(id);
-                  return (
-                    <Group key={id} justify="space-between" wrap="nowrap">
-                      <div style={{minWidth: 0}}>
-                        <Text fw={600} truncate>
-                          {a?.ticker ?? id}
-                        </Text>
-                        <Text size="note" c="dimmed" truncate>
-                          {a?.name}
-                        </Text>
-                      </div>
-                      <Group gap={4} wrap="nowrap">
-                        <NumberInput
-                          value={picked[id]}
-                          onChange={(v) => setWeight(id, Number(v) || 0)}
-                          min={0}
-                          max={100}
-                          w={80}
-                          suffix="%"
-                        />
-                        <Button size="compact-xs" variant="subtle" color="red" onClick={() => removeAsset(id)}>
-                          x
-                        </Button>
-                      </Group>
+              <Stack gap={4} mb="sm" mah="40vh" style={{overflowY: "auto"}}>
+                {legs.map((l) => (
+                  <Group key={l.key} justify="space-between" wrap="nowrap">
+                    <Group gap={6} wrap="nowrap" style={{minWidth: 0}}>
+                      <Text fw={600} truncate style={l.catalogId ? undefined : {opacity: 0.5}}>
+                        {l.ticker}
+                      </Text>
+                      {l.sector && (
+                        <Badge size="xs" variant="light" color="grape">
+                          {titleCase(l.sector)}
+                        </Badge>
+                      )}
+                      {!l.catalogId && (
+                        <Badge size="xs" variant="light" color="yellow">
+                          not in catalog
+                        </Badge>
+                      )}
                     </Group>
-                  );
-                })}
+                    <Text fw={700} style={{fontVariantNumeric: "tabular-nums"}}>
+                      {l.pct}%
+                    </Text>
+                  </Group>
+                ))}
               </Stack>
+            )}
+            {unmapped.length > 0 && (
+              <Text size="note" c="dimmed" mb="sm">
+                {unmapped.map((l) => l.ticker).join(", ")}{" "}
+                {unmapped.length === 1 ? "has" : "have"} no tokenized RWA in the
+                catalog; the remaining names are renormalized to 100% on submit.
+              </Text>
             )}
 
             <Group justify="space-between" mb="sm">
               <Text fw={600}>Total weight</Text>
-              <Text fw={700} c={total === 100 ? "green" : "red"}>
-                {total}%
+              <Text fw={700} c={submitLegs.length > 0 ? "green" : "red"}>
+                {submitLegs.reduce((a, l) => a + l.pct, 0)}%
               </Text>
-            </Group>
-            <Group mb="sm" grow>
-              <Button variant="default" onClick={equalWeight}>
-                Equal weight
-              </Button>
-              <Button variant="default" onClick={normalize}>
-                Normalize to 100%
-              </Button>
             </Group>
             <Button
               variant="light"
@@ -488,13 +716,16 @@ export function BuildPage() {
             </Button>
             {!canSubmit && (
               <Text size="note" c="dimmed" mt={6}>
-                Weights must sum to 100% with at least one asset and a name.
+                Needs a name and at least one catalog-mapped holding from the
+                config (or a generated index).
               </Text>
             )}
             <Text size="note" c="dimmed" mt={6}>
-              Mint calls MockUSDC.faucet() to send 1000 test USD (6 decimals) to
-              your connected wallet on Coston2. Deposits into the index vault are
-              on-chain for the house indices; mocked with the demo account.
+              The submitted basket carries the full config (version, signed
+              weights, filters, caps, normalization) alongside the resulting
+              weights, so any enclave can rebuild and attest it. Mint calls
+              MockUSDC.faucet() on Coston2; deposits into the index vault are
+              on-chain for the house indices, mocked with the demo account.
             </Text>
           </Card>
 
@@ -512,7 +743,14 @@ export function BuildPage() {
                 {built.map((b, i) => (
                   <Group key={i} justify="space-between">
                     <div>
-                      <Text fw={600}>{b.name}</Text>
+                      <Group gap={6}>
+                        <Text fw={600}>{b.name}</Text>
+                        {b.config && (
+                          <Badge size="xs" variant="light" color="blue">
+                            config v{b.config.configVersion}
+                          </Badge>
+                        )}
+                      </Group>
                       <Text size="note" c="dimmed">
                         {Object.entries(b.weights)
                           .map(([id, w]) => `${byId.get(id)?.ticker ?? id} ${w}%`)
@@ -552,19 +790,4 @@ export function BuildPage() {
       </Grid>
     </Stack>
   );
-}
-
-// Even integer weights over ids, remainder on the last.
-function evenWeights(ids: string[]): Record<string, number> {
-  const n = ids.length;
-  if (!n) return {};
-  const even = Math.floor(100 / n);
-  let rem = 100;
-  const out: Record<string, number> = {};
-  ids.forEach((id, i) => {
-    const w = i === n - 1 ? rem : even;
-    out[id] = w;
-    rem -= w;
-  });
-  return out;
 }

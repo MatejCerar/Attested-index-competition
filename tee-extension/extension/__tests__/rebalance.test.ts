@@ -1,11 +1,14 @@
 /**
- * INDEX/REBALANCE handler + rebalance-signer tests.
+ * INDEX/REBALANCE handler + rebalance-signer tests (scaffold-side, vitest).
  *
  * Asserts the integration contract with src/StableIndexVault.sol: the digest is
  * keccak256(abi.encode(address vault, uint256 nonce, uint16[] weightsBps,
  * uint256[] pricesE18)); the signature recovers to the TEE key's address; the
  * digest is deterministic and changes with the nonce; and validation rejects
- * bad weights / prices / hex.
+ * bad weights / prices / hex. Since the Phase 3 hardening the handler also
+ * recomputes buildIndexBps(matrixCsv, config) and signs ONLY weights equal to
+ * that deterministic build; the envelope carries {ids, config, matrixCsv}.
+ * Response shape {digest, preimage, signature} is unchanged.
  */
 
 import { recoverMessageAddress } from "viem";
@@ -19,6 +22,11 @@ import {
   validateRebalance,
   type Rebalance,
 } from "../app/index.js";
+import {
+  buildIndexBps,
+  parseCsv,
+  type IndexConfig,
+} from "../app/build-index.js";
 import * as handlers from "../app/handlers.js";
 import { bytesToHex, hexToBytes } from "../base/encoding.js";
 import type { HandlerResult } from "../base/types.js";
@@ -28,23 +36,54 @@ const TEST_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
 const TEST_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
+// Tiny frozen matrix + rule; equal weighting of 3 names -> [3334, 3333, 3333]
+// (largest remainder, tie to the lowest id).
+const MATRIX_CSV = [
+  "id,sector,market_cap_usd,f1",
+  "AAA,tech,100,3",
+  "BBB,tech,100,2",
+  "CCC,energy,100,1",
+].join("\n");
+
+const CONFIG: IndexConfig = {
+  version: 1,
+  weights: { f1: 1 },
+  normalization: "rank",
+  winsor: 0,
+  top_n: 3,
+  max_weight: 1,
+  sector_cap: 1,
+  weighting: "equal",
+  eligible_sectors: [],
+  min_market_cap_usd: 0,
+  id_col: "id",
+  sector_col: "sector",
+  market_cap_col: "market_cap_usd",
+};
+
+const BUILT = buildIndexBps(parseCsv(MATRIX_CSV), CONFIG);
+
 const R: Rebalance = {
   vault: "0x1111111111111111111111111111111111111111",
   nonce: 3n,
-  weightsBps: [5000, 3000, 2000],
-  pricesE18: [2_000_000_000_000_000_000n, 1_000_000_000_000_000_000n, 500_000_000_000_000_000n],
+  weightsBps: BUILT.weightsBps,
+  pricesE18: BUILT.weightsBps.map(() => 1_000_000_000_000_000_000n),
 };
 
 function jsonMsg(obj: unknown): string {
   return bytesToHex(Buffer.from(JSON.stringify(obj), "utf-8"));
 }
 
-function rebalanceMsg(r: Rebalance): string {
+function rebalanceMsg(r: Rebalance, over: Record<string, unknown> = {}): string {
   return jsonMsg({
     vault: r.vault,
     nonce: r.nonce.toString(),
     weightsBps: r.weightsBps,
     pricesE18: r.pricesE18.map((p) => p.toString()),
+    ids: BUILT.tickers,
+    config: CONFIG,
+    matrixCsv: MATRIX_CSV,
+    ...over,
   });
 }
 
@@ -100,6 +139,28 @@ describe("handleIndexRebalance", () => {
       signature: resp.signature as `0x${string}`,
     });
     expect(recovered.toLowerCase()).toBe(TEST_ADDR.toLowerCase());
+  });
+
+  it("rejects weights that differ from the deterministic build", async () => {
+    process.env.TEE_REBALANCER_KEY = TEST_KEY;
+    delete process.env.INDEX_VAULT;
+    const tampered = [...BUILT.weightsBps];
+    tampered[0]! += 1;
+    tampered[1]! -= 1; // still sums to 10000: only the gate catches it
+    const r = await handlers.handleIndexRebalance(
+      rebalanceMsg({ ...R, weightsBps: tampered }),
+    );
+    expect(r[1]).toBe(0);
+    expect(r[2]).toBe("weights do not match deterministic build");
+  });
+
+  it("rejects an envelope without the build inputs", async () => {
+    process.env.TEE_REBALANCER_KEY = TEST_KEY;
+    const r = await handlers.handleIndexRebalance(
+      rebalanceMsg(R, { matrixCsv: "" }),
+    );
+    expect(r[1]).toBe(0);
+    expect(r[2]).toContain("matrixCsv");
   });
 
   it("rejects a vault not pinned by the enclave", async () => {

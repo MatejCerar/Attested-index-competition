@@ -18,3 +18,9 @@ export const OP_COMMAND_SAY_GOODBYE = "SAY_GOODBYE";
 //   INDEX = 0x494e444558000000...  REBALANCE = 0x5245424149...
 export const OP_TYPE_INDEX = "INDEX";
 export const OP_COMMAND_REBALANCE = "REBALANCE";
+
+// Deterministic in-enclave index build: bytes32("BUILD"). The enclave re-runs
+// the whole build (build-index.ts) and signs the EpochAttestation that
+// AttestedEpochRegistry.submitEpoch verifies, so the signature certifies the
+// weights are the output of the stated rule, not just "an enclave signed".
+export const OP_COMMAND_BUILD = "BUILD";

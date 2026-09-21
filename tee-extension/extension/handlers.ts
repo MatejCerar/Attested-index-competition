@@ -23,6 +23,14 @@ import {
   type Rebalance,
 } from "./index.js";
 import {
+  buildIndexEpoch,
+  signEpochAttestation,
+  weightsMatchBuild,
+  type BuiltEpoch,
+} from "./epoch.js";
+import type { IndexConfig } from "./build-index.js";
+import {
+  OP_COMMAND_BUILD,
   OP_COMMAND_REBALANCE,
   OP_COMMAND_SAY_GOODBYE,
   OP_COMMAND_SAY_HELLO,
@@ -42,6 +50,8 @@ let lastFarewell = "";
 // is never changed.
 let rebalanceCount = 0;
 let lastDigest = "";
+let indexBuildCount = 0;
+let lastOutputRoot = "";
 
 /** Reset all state. Used by tests; not part of the wire contract. */
 export function resetState(): void {
@@ -51,6 +61,8 @@ export function resetState(): void {
   lastFarewell = "";
   rebalanceCount = 0;
   lastDigest = "";
+  indexBuildCount = 0;
+  lastOutputRoot = "";
 }
 
 /** Wire handlers to (opType, opCommand) pairs. */
@@ -58,6 +70,7 @@ export function register(framework: Framework): void {
   framework.handle(OP_TYPE_GREETING, OP_COMMAND_SAY_HELLO, handleSayHello);
   framework.handle(OP_TYPE_GREETING, OP_COMMAND_SAY_GOODBYE, handleSayGoodbye);
   framework.handle(OP_TYPE_INDEX, OP_COMMAND_REBALANCE, handleIndexRebalance);
+  framework.handle(OP_TYPE_INDEX, OP_COMMAND_BUILD, handleIndexBuild);
 }
 
 /**
@@ -80,6 +93,14 @@ export function reportRebalanceState(): unknown {
   return {
     rebalanceCount,
     lastDigest,
+  };
+}
+
+/** Build counter, kept out of the conformance-pinned reportState(). */
+export function reportIndexBuildState(): unknown {
+  return {
+    indexBuildCount,
+    lastOutputRoot,
   };
 }
 
@@ -160,14 +181,21 @@ export function handleSayGoodbye(msg: string): HandlerResult {
 }
 
 /**
- * INDEX/REBALANCE - EIP-191 sign the StableIndexVault rebalance digest.
+ * INDEX/REBALANCE - EIP-191 sign the StableIndexVault rebalance digest, but
+ * ONLY for weights the enclave can reproduce from the frozen matrix.
  *
  * The message is a hex-encoded UTF-8 JSON envelope:
- *   {"vault": "0x..", "nonce": <n>, "weightsBps": [uint16...], "pricesE18": ["<dec>"...]}
- * The handler validates it, builds the preimage
+ *   {"vault": "0x..", "nonce": <n>, "weightsBps": [uint16...],
+ *    "pricesE18": ["<dec>"...], "ids": ["TICK"...],
+ *    "config": IndexConfig, "matrixCsv": "id,sector,...\n..."}
+ * ids[i] names the constituent weightsBps[i] belongs to. Before signing, the
+ * enclave recomputes buildIndexBps(matrixCsv, config) and refuses ("weights do
+ * not match deterministic build") unless the requested id -> bps mapping
+ * equals the recomputed one. Only then it builds the preimage
  *   abi.encode(address vault, uint256 nonce, uint16[] weightsBps, uint256[] pricesE18),
  * signs keccak256(preimage) with the TEE key (whose address == vault.rebalancer),
- * and returns a JSON {digest, preimage, signature} (signature 0x + 65 bytes).
+ * and returns a JSON {digest, preimage, signature} (signature 0x + 65 bytes,
+ * response shape unchanged so the existing on-chain relay keeps working).
  */
 export async function handleIndexRebalance(msg: string): Promise<HandlerResult> {
   // 1. Decode
@@ -193,10 +221,22 @@ export async function handleIndexRebalance(msg: string): Promise<HandlerResult> 
     nonce?: unknown;
     weightsBps?: unknown;
     pricesE18?: unknown;
+    ids?: unknown;
+    config?: unknown;
+    matrixCsv?: unknown;
   };
   if (typeof obj.vault !== "string") return [null, 0, "vault must be an address string"];
   if (!Array.isArray(obj.weightsBps)) return [null, 0, "weightsBps must be an array"];
   if (!Array.isArray(obj.pricesE18)) return [null, 0, "pricesE18 must be an array"];
+  if (!Array.isArray(obj.ids) || obj.ids.some((t) => typeof t !== "string")) {
+    return [null, 0, "ids must be an array of constituent id strings"];
+  }
+  if (typeof obj.config !== "object" || obj.config === null || Array.isArray(obj.config)) {
+    return [null, 0, "config must be the index config object"];
+  }
+  if (typeof obj.matrixCsv !== "string" || obj.matrixCsv === "") {
+    return [null, 0, "matrixCsv must be the frozen feature matrix csv"];
+  }
 
   let rebalance: Rebalance;
   try {
@@ -213,6 +253,16 @@ export async function handleIndexRebalance(msg: string): Promise<HandlerResult> 
   // 2. Validate
   const bad = validateRebalance(rebalance);
   if (bad) return [null, 0, bad];
+
+  // The gate: recompute the deterministic build in-enclave and refuse to sign
+  // any weights that are not its exact output.
+  const mismatch = weightsMatchBuild(
+    obj.ids as string[],
+    rebalance.weightsBps,
+    obj.matrixCsv,
+    obj.config as IndexConfig,
+  );
+  if (mismatch) return [null, 0, mismatch];
 
   // Enclave-held config: the rebalancer key (== vault.rebalancer). Optionally
   // pin the vault so the enclave refuses to sign for any other vault.
@@ -239,5 +289,109 @@ export async function handleIndexRebalance(msg: string): Promise<HandlerResult> 
   rebalanceCount++;
   lastDigest = digest;
   const resp = { digest, preimage, signature };
+  return [bytesToHex(Buffer.from(JSON.stringify(resp), "utf-8")), 1, null];
+}
+
+const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
+const UINT64_MAX = (1n << 64n) - 1n;
+
+/**
+ * INDEX/BUILD - run the deterministic index build INSIDE the enclave and sign
+ * the EpochAttestation that AttestedEpochRegistry.submitEpoch verifies.
+ *
+ * The message is a hex-encoded UTF-8 JSON envelope:
+ *   {"seriesId": "<name or 0x bytes32>", "epochId": <uint64>,
+ *    "config": IndexConfig, "matrixCsv": "id,sector,...\n...",
+ *    "producedAt": <unix seconds>}
+ *
+ * The enclave recomputes buildIndexBps(matrixCsv, config), Merkle-roots the
+ * (id, weightBps) leaves (IndexWeightLeaf scheme), sets manifestHash =
+ * keccak256(matrixCsv), and personal_signs the registry digest with the TEE
+ * key. codeMeasurement is enclave-owned: env MEASUREMENT, never the caller.
+ * Response: {weightsBps, ids, outputRoot, manifestHash, signature, preimage}.
+ */
+export async function handleIndexBuild(msg: string): Promise<HandlerResult> {
+  // 1. Decode
+  let raw: Uint8Array;
+  try {
+    raw = hexToBytes(msg);
+  } catch (e) {
+    return [null, 0, `decoding request: invalid hex: ${String(e)}`];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw).toString("utf-8"));
+  } catch (e) {
+    return [null, 0, `decoding request: ${String(e)}`];
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return [null, 0, "decoding request: expected a JSON object"];
+  }
+
+  const obj = parsed as {
+    seriesId?: unknown;
+    epochId?: unknown;
+    config?: unknown;
+    matrixCsv?: unknown;
+    producedAt?: unknown;
+  };
+
+  // 2. Validate
+  if (typeof obj.seriesId !== "string" || obj.seriesId === "") {
+    return [null, 0, "seriesId must be a series name or bytes32 hex"];
+  }
+  if (typeof obj.config !== "object" || obj.config === null || Array.isArray(obj.config)) {
+    return [null, 0, "config must be the index config object"];
+  }
+  if (typeof obj.matrixCsv !== "string" || obj.matrixCsv === "") {
+    return [null, 0, "matrixCsv must be the frozen feature matrix csv"];
+  }
+  let epochId: bigint;
+  let producedAt: bigint;
+  try {
+    epochId = BigInt(obj.epochId as string | number);
+    producedAt = BigInt(obj.producedAt as string | number);
+  } catch (e) {
+    return [null, 0, `decoding request: ${e instanceof Error ? e.message : String(e)}`];
+  }
+  if (epochId < 0n || epochId > UINT64_MAX) return [null, 0, "epochId out of uint64 range"];
+  if (producedAt < 0n || producedAt > UINT64_MAX) return [null, 0, "producedAt out of uint64 range"];
+
+  const signerKey = process.env.TEE_REBALANCER_KEY as `0x${string}` | undefined;
+  const measurement = process.env.MEASUREMENT;
+  if (!signerKey) return [null, 0, "TEE_REBALANCER_KEY not set in enclave"];
+  if (!measurement || !BYTES32_RE.test(measurement)) {
+    return [null, 0, "MEASUREMENT not set in enclave"];
+  }
+
+  // 3. Execute + sign
+  let built: BuiltEpoch;
+  let signature: string;
+  try {
+    built = buildIndexEpoch({
+      seriesId: obj.seriesId,
+      epochId,
+      config: obj.config as IndexConfig,
+      matrixCsv: obj.matrixCsv,
+      producedAt,
+      codeMeasurement: measurement as `0x${string}`,
+    });
+    signature = await signEpochAttestation(built.att, signerKey);
+  } catch (e) {
+    return [null, 0, `index build failed: ${e instanceof Error ? e.message : String(e)}`];
+  }
+
+  // 4. Respond
+  indexBuildCount++;
+  lastOutputRoot = built.att.outputRoot;
+  const resp = {
+    weightsBps: built.weightsBps,
+    ids: built.ids,
+    outputRoot: built.att.outputRoot,
+    manifestHash: built.att.manifestHash,
+    signature,
+    preimage: built.preimage,
+  };
   return [bytesToHex(Buffer.from(JSON.stringify(resp), "utf-8")), 1, null];
 }

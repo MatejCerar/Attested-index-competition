@@ -1,0 +1,16 @@
+[Unit]
+Description=Index Competition live engine (scripts/live-engine.mjs)
+After=network-online.target index-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/index-competition
+EnvironmentFile=/etc/index-competition.env
+ExecStart=/usr/bin/node scripts/live-engine.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,7 @@ import {
   Title,
 } from "@mantine/core";
 import {Link} from "@tanstack/react-router";
+import {ProvenanceBadge} from "@/components/provenance-badge.tsx";
 import {useLeaderboard} from "@/core/use-data.ts";
 import type {LeaderboardIndex} from "@/core/types.ts";
 
@@ -139,6 +140,7 @@ function Row({idx}: {idx: LeaderboardIndex}) {
               Yours
             </Badge>
           )}
+          <ProvenanceBadge p={idx} />
         </Group>
         <Text size="note" c="dimmed" maw={280}>
           "{idx.prompt}"

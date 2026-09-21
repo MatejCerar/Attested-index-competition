@@ -4,6 +4,8 @@ pragma solidity ^0.8.25;
 import {Test} from "forge-std/Test.sol";
 import {AttestedEpochRegistry} from "../src/AttestedEpochRegistry.sol";
 import {IndexLeaf} from "../src/libs/IndexLeaf.sol";
+import {IndexWeightLeaf} from "../src/libs/IndexWeightLeaf.sol";
+import {IndexVault} from "../src/consumers/IndexVault.sol";
 import {
     SimulatedAttestationVerifier
 } from "../src/attestation/SimulatedAttestationVerifier.sol";
@@ -187,6 +189,44 @@ contract AttestedEpochRegistryTest is Test {
         proof[0] = leaves[1];
         proof[1] = n23;
         assertTrue(reg.verifyLeaf(SERIES, 2, leaves[0], proof));
+    }
+
+    // INDEX/BUILD epoch (IndexWeightLeaf schema): finalize, then a vault
+    // trusts a rebalance weight only with a proof against the root. The
+    // registry itself is unchanged; verifyLeaf is leaf-schema free. Vector
+    // pinned byte-for-byte against extension/epoch.ts in
+    // tee-extension/extension/__tests__/index-build-op.test.ts.
+    function test_indexWeightEpochVerifiesRebalanceWeights() public {
+        bytes32 leafAaa = IndexWeightLeaf.hash(bytes32("AAA"), 3334);
+        bytes32 leafBbb = IndexWeightLeaf.hash(bytes32("BBB"), 3333);
+        bytes32 leafCcc = IndexWeightLeaf.hash(bytes32("CCC"), 3333);
+        assertEq(
+            leafAaa,
+            0x1498c7ccce0feae7fc01b867d17726ed4782ef170cbeb5a1df7241175979c10c
+        );
+
+        // epoch.ts sorts leaf hashes ascending: here AAA < BBB < CCC already
+        bytes32 root = _hashPair(_hashPair(leafAaa, leafBbb), leafCcc);
+        assertEq(
+            root,
+            0x3560cde7041a474a365a29b97a7305da65ac65757b901aa6fa4bf5d1cb83335b
+        );
+
+        AttestedEpochRegistry.EpochAttestation memory a = _att(root);
+        a.epochId = 3;
+        _submitFor(pkA, a);
+        _submitFor(pkB, a);
+        assertTrue(reg.isFinalized(SERIES, 3));
+
+        IndexVault vault = new IndexVault(reg, SERIES);
+        bytes32[] memory proof = new bytes32[](2);
+        proof[0] = leafBbb;
+        proof[1] = leafCcc;
+        assertEq(vault.attestedWeightBps(3, bytes32("AAA"), 3334, proof), 3334);
+
+        // a substituted weight has no valid proof
+        vm.expectRevert("unattested weight");
+        vault.attestedWeightBps(3, bytes32("AAA"), 5000, proof);
     }
 
     function _submitFor(

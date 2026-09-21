@@ -18,6 +18,18 @@ The signing key is held INSIDE the TEE and its address is the vault's
 `rebalancer`. So a valid `rebalance()` on-chain is proof the plan was signed in
 the enclave, not by a hot key on a laptop.
 
+Phase 3 hardening: the enclave no longer signs arbitrary weights. The
+REBALANCE envelope also carries `{ids[], config, matrixCsv}`; the enclave
+re-runs `buildIndexBps(matrixCsv, config)` (`extension/build-index.ts`) and
+refuses ("weights do not match deterministic build") unless the requested
+id -> bps mapping equals the recomputed one. A second op, INDEX/BUILD
+(`extension/epoch.ts` + `handleIndexBuild`), runs the whole deterministic
+build inside the enclave and signs the `EpochAttestation` that
+`src/AttestedEpochRegistry.sol:submitEpoch` verifies (leaf scheme
+`src/libs/IndexWeightLeaf.sol`, manifestHash = keccak256 of the frozen
+matrix csv, codeMeasurement from env `MEASUREMENT`). So the signature
+certifies the weights ARE the output of the stated rule on the stated data.
+
 ## This is ADDITIVE and enabled by CONFIG only
 
 Nothing in `scripts/server.mjs`, the engines, or `rebalancer/rebalancer.mjs` is
@@ -36,10 +48,16 @@ No code change anywhere in the project.
 
 | Path | What it is |
 | --- | --- |
-| `extension/config.ts` | Adds `OP_TYPE_INDEX` / `OP_COMMAND_REBALANCE` (bytes32 of "INDEX"/"REBALANCE") next to the Hello World constants. |
+| `extension/config.ts` | Adds `OP_TYPE_INDEX` / `OP_COMMAND_REBALANCE` / `OP_COMMAND_BUILD` (bytes32 of "INDEX"/"REBALANCE"/"BUILD") next to the Hello World constants. |
 | `extension/index.ts` | `REBALANCE_ABI`, `encodeRebalance`, `rebalanceDigest`, `validateRebalance`, `signRebalance`. The rebalance preimage + EIP-191 signer. |
-| `extension/handlers.ts` | Adds `handleIndexRebalance` + registers INDEX/REBALANCE + `reportRebalanceState()`; leaves `reportState()` byte-for-byte unchanged (conformance-pinned). |
-| `extension/__tests__/rebalance.test.ts` | Unit tests: digest determinism, signature recovers to the TEE address, weight/price validation, vault pinning, empty/invalid handling. |
+| `extension/build-index.ts` | The deterministic index builder (TS port of `deterministic-index/index_builder.py`), parity-pinned at the bps boundary. |
+| `extension/epoch.ts` | INDEX/BUILD core: IndexWeightLeaf leaves, sorted-pair Merkle root, `EpochAttestation` preimage/digest/signing, and `weightsMatchBuild` (the REBALANCE gate). |
+| `extension/handlers.ts` | Adds `handleIndexRebalance` (gated: signs only weights equal to the deterministic build) + `handleIndexBuild` + `reportRebalanceState()`/`reportIndexBuildState()`; leaves `reportState()` byte-for-byte unchanged (conformance-pinned). |
+| `extension/abi.ts` | Verbatim copy of the scaffold's SAY_GOODBYE decoder so `handlers.ts` is importable for local tests; overwriting the scaffold's identical file is a no-op. |
+| `extension/__tests__/rebalance.test.ts` | Scaffold-side vitest: digest determinism, signature recovery, validation, vault pinning, the deterministic-build gate. |
+| `extension/__tests__/index-build-op.test.ts` | Local `node --test`: INDEX/BUILD golden weights, deterministic outputRoot across invocations, attestation preimage/signature, cross-language leaf/root pin. |
+| `extension/__tests__/rebalance-gate.test.ts` | Local `node --test`: REBALANCE signs matching weights, rejects tampered/mislabeled/missing-input envelopes. |
+| `extension/__tests__/resolve-ts.mjs` | Local test helper mapping the sources' scaffold-form `./x.js` imports to `.ts` (node does not fall back on its own). |
 | `enclave-gateway.mjs` | CORS shim: `POST /sign {message:b64} -> {signature:b64}` (abi-encoded preimage) plus `POST /rebalance {vault,nonce,weights,prices}`. Forwards to the enclave `/action`. |
 | `InstructionSender.sol` | Scaffold contract with `sendRebalance(bytes)` + the INDEX/REBALANCE op constants. Replaces `contracts/InstructionSender.sol`. |
 | `env/.env.coston2.example` | `.env.coston2` template (secrets blanked; `INDEX_*` vars). |

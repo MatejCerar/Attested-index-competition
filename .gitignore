@@ -22,3 +22,17 @@ tee-extension/.env.coston2
 tee-extension/env/.env.coston2
 tee-extension/env/extension_proxy.coston2.docker.toml
 tee-extension/**/extension_proxy.coston2.docker.toml
+
+# python caches (deterministic-index)
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# regenerated competition output (leaderboard is rewritten when the engine runs)
+app/public/data/leaderboard.json
+
+# docs: keep only README.md and ARCHITECTURE.md tracked; ignore other markdown
+# (SPEC.md, CHANGELOG.md, DEPLOYMENT.md, DEPLOY.md, ...) so the commit is code
+*.md
+!README.md
+!ARCHITECTURE.md

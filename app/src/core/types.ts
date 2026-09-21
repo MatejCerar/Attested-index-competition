@@ -29,6 +29,19 @@ export interface Catalog {
   assets: CatalogAsset[];
 }
 
+// Attestation / provenance of a deterministic-index build. All optional so
+// old leaderboard/live JSON without them still renders.
+export interface IndexProvenance {
+  matrixHash?: string; // keccak/sha of the frozen feature matrix
+  configVersion?: number; // deterministic-index config version
+  epochId?: number | string; // rebalance epoch the weights were attested in
+  attestedByCount?: number; // enclaves that reproduced the same outputRoot
+  outputRoot?: string; // root hash of the built (tickers, bps) output
+  priceOracleMode?: "enclave-signed" | "fdc" | "raw";
+  priceAttested?: boolean; // the money-moving rebalance price is attested
+  lastPriceRound?: number | string; // last attested price round/epoch
+}
+
 export interface LeaderboardPosition {
   sym: string;
   weight: number;
@@ -38,7 +51,7 @@ export interface LeaderboardPosition {
   source?: string;
 }
 
-export interface LeaderboardIndex {
+export interface LeaderboardIndex extends IndexProvenance {
   id: string;
   name: string;
   prompt: string;
@@ -90,7 +103,7 @@ export interface NavPoint {
   ret: number;
 }
 
-export interface LiveIndex {
+export interface LiveIndex extends IndexProvenance {
   id: string;
   name: string;
   prompt: string;
@@ -130,6 +143,22 @@ export interface LiveData {
   indices: LiveIndex[];
 }
 
+// The full index definition a config-built basket carries alongside its
+// resulting weights: factor weights, filters, caps, normalization.
+export interface BasketConfig {
+  configVersion: number;
+  weights: Record<string, number>; // signed feature weights
+  normalization: "zscore" | "rank" | "minmax";
+  winsor: number;
+  weighting: "equal" | "score_tilt";
+  topN: number;
+  maxWeight: number; // per-name cap, fraction
+  sectorCap: number; // per-sector cap, fraction
+  eligibleSectors: string[];
+  minMarketCapUsd: number;
+  competitivePosition?: string[];
+}
+
 // The builder's in-progress index and a user basket (appended to
 // user-baskets.json, matching build.html's shape plus strategy).
 export interface UserBasket {
@@ -140,4 +169,5 @@ export interface UserBasket {
   kind: "rwa";
   strategy: string;
   weights: Record<string, number>;
+  config?: BasketConfig; // present when built from the config editor
 }

@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import {AttestedEpochRegistry} from "../AttestedEpochRegistry.sol";
 import {IndexLeaf} from "../libs/IndexLeaf.sol";
+import {IndexWeightLeaf} from "../libs/IndexWeightLeaf.sol";
 
 /// Example consumer: a weight is trusted only if its leaf is proven against
 /// a finalized epoch. A substituted weight has no valid proof.
@@ -28,5 +29,22 @@ contract IndexVault {
             "unattested weight"
         );
         return weightPpm;
+    }
+
+    /// Deterministic bps index (INDEX/BUILD epochs): a rebalance weight is
+    /// trusted only if its (id, weightBps) leaf proves against a finalized
+    /// root. The registry needs no changes; verifyLeaf is leaf-schema free.
+    function attestedWeightBps(
+        uint64 epochId,
+        bytes32 id,
+        uint16 weightBps,
+        bytes32[] calldata proof
+    ) external view returns (uint16) {
+        bytes32 leaf = IndexWeightLeaf.hash(id, weightBps);
+        require(
+            registry.verifyLeaf(seriesId, epochId, leaf, proof),
+            "unattested weight"
+        );
+        return weightBps;
     }
 }

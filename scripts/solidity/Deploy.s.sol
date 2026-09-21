@@ -2,11 +2,11 @@
 pragma solidity ^0.8.25;
 
 import {Script} from "forge-std/Script.sol";
-import {AttestedEpochRegistry} from "../src/AttestedEpochRegistry.sol";
-import {IndexVault} from "../src/consumers/IndexVault.sol";
+import {AttestedEpochRegistry} from "../../src/AttestedEpochRegistry.sol";
+import {IndexVault} from "../../src/consumers/IndexVault.sol";
 import {
     SimulatedAttestationVerifier
-} from "../src/attestation/SimulatedAttestationVerifier.sol";
+} from "../../src/attestation/SimulatedAttestationVerifier.sol";
 
 /// Deploy once and reuse. Set GOVERNANCE and ENCLAVE_CODE (tee-node image
 /// digest) in the env. Enclaves self-register later via

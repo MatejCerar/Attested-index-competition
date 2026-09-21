@@ -35,6 +35,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import {ProvenanceBadge} from "@/components/provenance-badge.tsx";
 import {useLive} from "@/core/use-data.ts";
 import type {LiveData, LiveIndex} from "@/core/types.ts";
 
@@ -491,6 +492,7 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
               {Math.round(b.coverage * 100)}% on venue
             </Badge>
           )}
+          <ProvenanceBadge p={b} />
         </Group>
         <Text size="note" c="dimmed" maw={320}>
           "{b.prompt}"

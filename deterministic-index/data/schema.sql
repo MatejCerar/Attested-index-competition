@@ -1,0 +1,30 @@
+-- Source-of-truth features store. Data feed updates rows here;
+-- a frozen snapshot (companies.csv) is exported per index version.
+create table if not exists company_features (
+    ticker text primary key,
+    name text,
+    market_cap_usd double precision,
+    pe_forward double precision,
+    ev_ebitda double precision,
+    fcf_yield double precision,
+    dividend_yield double precision,
+    revenue_growth_yoy double precision,
+    gross_margin double precision,
+    return_on_equity double precision,
+    net_debt_to_ebitda double precision,
+    momentum_12m double precision,
+    volatility_90d double precision,
+    moat_strength smallint check (moat_strength between 0 and 5),
+    management_quality smallint check (management_quality between 0 and 5),
+    ai_exposure smallint check (ai_exposure between 0 and 5),
+    regulatory_risk smallint check (regulatory_risk between 0 and 5),
+    esg_controversy smallint check (esg_controversy between 0 and 5),
+    demand_durability smallint check (demand_durability between 0 and 5),
+    sector text,
+    market_cap_tier text,
+    competitive_position text,
+    labeled_by text default 'ai',
+    labeled_at timestamptz default now(),
+    model_id text,
+    reviewed_by text
+);

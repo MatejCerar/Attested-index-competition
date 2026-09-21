@@ -1,12 +1,14 @@
 // Live competition engine. A continuous loop that turns the board into a real
-// competition: a field of 5 distinct indices, each with a rebalance strategy
-// from the (expanded) templates, priced every tick on LIVE market data and
-// tracked as NAV/return since a t0 baseline. Per index per tick it computes
-// current weights from holdings*price, asks its strategy.shouldRebalance(), and
-// when true rebalances to target with the real vault math (nav, then
-// holdings[i] = nav*wBps/10000/price[i]) and logs the reason. Writes
-// app/public/data/live.json (NAV time-series, ranks, last reason) and
-// leaderboard.json every tick so /live and /leaderboard move.
+// competition: the house field is the 5 ATTESTED indices (configs over the
+// frozen feature matrix, weights from the deterministic build so the enclave
+// rebalance gate reproduces them), racing alongside user submissions. Each is
+// priced every tick on LIVE market data and tracked as NAV/return since a t0
+// baseline. Per index per tick it computes current weights from
+// holdings*price, asks its strategy.shouldRebalance(), and when true
+// rebalances to target with the real vault math (nav, then holdings[i] =
+// nav*wBps/10000/price[i]) and logs the reason. Writes
+// app/public/data/live.json (NAV time-series, ranks, last reason, provenance)
+// and leaderboard.json every tick so /live and /leaderboard move.
 //
 // Prices (RWA-only): Yahoo (tokenized equities to the bare ticker, metals to
 // futures GC=F/SI=F/PL=F/PA=F). Any symbol with no live source (or a fetch
@@ -25,9 +27,14 @@
 import {readFileSync, writeFileSync, existsSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
-import {underlyingSymbol, fetchYahoo} from "./prices.mjs";
+import {keccak256} from "ethers";
+import {underlyingSymbol, bareTicker, fetchYahoo} from "./prices.mjs";
 import {getStrategy} from "../index/strategies.mjs";
 import {weightsToBps} from "../index/weights.mjs";
+import {ATTESTED_INDICES} from "../index/attested-indices.mjs";
+import {buildFromConfig, loadMatrixCsv, matrixHash} from "../index/build-index.mjs";
+import {createOracle} from "../pipeline/oracle/oracle.mjs";
+import {teeSignEnvelope} from "../enclave/teesign.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -53,81 +60,61 @@ const byId = new Map(catalog.assets.map((a) => [a.id, a]));
 const pctS = (x) => (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// -- The competing field: exactly 5 solid, distinct RWA indices, each with a
-// strategy from the expanded templates. All legs price on Yahoo (tokenized
-// equities to the bare underlying, metals to futures). No crypto on the board.
-// Exactly ONE index (ai-semiconductors) runs the "minute" strategy so it
-// visibly rebalances about once a minute. --
-const FIELD = [
-    {
-        id: "mag-7-rwa",
-        name: "Big-Tech RWA",
-        prompt: "Mega-cap US tech as tokenized equities, tilted to the largest names.",
+// The pluggable price oracle (pipeline/oracle). Off-chain the mode only labels
+// provenance; on-chain (mode enclave-signed) rebalances use attested prices.
+const oracle = createOracle({
+    mode: process.env.PRICE_ORACLE_MODE ?? (process.env.TEE_SIGN_URL ? "enclave-signed" : "raw"),
+});
+const MATRIX_HASH = matrixHash();
+
+// -- The house field: the ATTESTED indices. Each is a CONFIG over the frozen
+// feature matrix; its weights are the deterministic build output, so the
+// enclave INDEX/REBALANCE gate reproduces and signs them. Matrix ids are
+// large-cap tickers (NVDA, MSFT, ...) so every leg prices live on Yahoo. --
+
+// Resolve a matrix ticker to a priceable catalog asset (recognizable tokenized
+// issuers first) so legs reuse the existing pool syms and walk seeds.
+const ISSUER_PREF = ["backed", "ondo", "robinhood"];
+function assetForTicker(t) {
+    const hits = catalog.assets.filter((a) => a.priceUsd > 0 && bareTicker(a) === t);
+    const rank = (a) => {
+        const i = ISSUER_PREF.findIndex((p) => String(a.issuer || "").toLowerCase().includes(p));
+        return i < 0 ? ISSUER_PREF.length : i;
+    };
+    hits.sort((a, b) => rank(a) - rank(b));
+    return hits[0] ?? null;
+}
+
+function attestedEntry(ix) {
+    const built = buildFromConfig(ix.config);
+    const legs = built.ids.map((t, i) => {
+        const a = assetForTicker(t);
+        return {
+            id: a?.id ?? t,
+            sym: a?.ticker ?? t,
+            symbol: a ? underlyingSymbol(a) : t,
+            src: "yahoo",
+            walkSeed: a?.priceUsd ?? null,
+            weight: built.weightsBps[i] / 100,
+            matrixId: t,
+        };
+    });
+    return {
+        id: ix.id,
+        name: ix.name,
+        prompt: ix.prompt,
         kind: "rwa",
-        strategy: "thirty-minute-or-drift-5",
-        weights: {
-            "NVDAx::backed-assets-je-limited": 25,
-            "AAPLx::backed-assets-je-limited": 20,
-            "MSFTx::backed-assets-je-limited": 20,
-            "AMZNx::backed-assets-je-limited": 18,
-            "GOOGLx::backed-assets-je-limited": 17,
-        },
-    },
-    {
-        // Minute strategy: visibly rebalances about once a minute.
-        id: "ai-semiconductors",
-        name: "AI & Semiconductors",
-        prompt: "Picks-and-shovels of the AI buildout: GPU, foundry and memory names.",
-        kind: "rwa",
-        strategy: "minute",
-        weights: {
-            "NVDAx::backed-assets-je-limited": 30,
-            "AVGOx::backed-assets-je-limited": 18,
-            "TSMx::backed-assets-je-limited": 16,
-            "ASMLx::backed-assets-je-limited": 14,
-            "AMDx::backed-assets-je-limited": 14,
-            "MUx::backed-assets-je-limited": 8,
-        },
-    },
-    {
-        id: "wall-street-financials",
-        name: "Wall Street Financials",
-        prompt: "Money-center banking and card-network rails as tokenized equities.",
-        kind: "rwa",
-        strategy: "ten-minute-or-drift-2",
-        weights: {
-            "JPMx::backed-assets-je-limited": 35,
-            "Vx::backed-assets-je-limited": 25,
-            "MAx::backed-assets-je-limited": 25,
-            "GSx::backed-assets-je-limited": 15,
-        },
-    },
-    {
-        id: "precious-metals",
-        name: "Precious Metals",
-        prompt: "Tokenized precious metals as an inflation hedge: gold-heavy with silver, platinum, palladium.",
-        kind: "rwa",
-        strategy: "hourly-or-drift-5",
-        weights: {
-            "XAUT0::usdt0-network-xaut0-deployments": 50,
-            "SLV::robinhood-markets-inc": 25,
-            "PPLTon::ondo-global-markets-bvi-limited": 15,
-            "PALLx::backed-assets-je-limited": 10,
-        },
-    },
-    {
-        id: "tokenized-index-funds",
-        name: "Tokenized Index Funds",
-        prompt: "A broad-market allocation using tokenized ETFs: large-cap core, Nasdaq growth tilt, small-cap kicker.",
-        kind: "rwa",
-        strategy: "drift-5",
-        weights: {
-            "SPYx::backed-assets-je-limited": 50,
-            "QQQx::backed-assets-je-limited": 35,
-            "IWMx::backed-assets-je-limited": 15,
-        },
-    },
-];
+        strategy: ix.strategy,
+        attested: true,
+        config: ix.config,
+        outputRoot: built.outputRoot,
+        weights: Object.fromEntries(legs.map((l) => [l.sym, l.weight])),
+        weightsBpsBySym: Object.fromEntries(legs.map((l, i) => [l.sym, built.weightsBps[i]])),
+        matrixIdBySym: Object.fromEntries(legs.map((l) => [l.sym, l.matrixId])),
+        strat: getStrategy(ix.strategy),
+        legs,
+    };
+}
 
 // Resolve each leg's live price symbol + source. RWA -> Yahoo via
 // underlyingSymbol. Anything unmapped falls to the random walk. Submissions are
@@ -146,11 +133,7 @@ function buildLegs(b) {
         };
     });
 }
-const field = FIELD.map((b) => ({
-    ...b,
-    strat: getStrategy(b.strategy),
-    legs: buildLegs(b),
-}));
+const field = ATTESTED_INDICES.map(attestedEntry);
 
 // Every distinct live symbol so one batched Yahoo fetch per tick. Submissions
 // grow this set at runtime as they join, so their legs get fetched.
@@ -169,7 +152,7 @@ function registerLegs(b) {
 for (const b of field) registerLegs(b);
 
 // Ids already racing (house + joined submissions), so we never double-count.
-const houseIds = new Set(FIELD.map((b) => b.id));
+const houseIds = new Set(ATTESTED_INDICES.map((b) => b.id));
 const raceIds = new Set(field.map((b) => b.id));
 
 // Baseline a fresh index at CURRENT prices: size units so nav==CAPITAL (return
@@ -285,7 +268,7 @@ let usedWalk = false;
 async function fetchTick() {
     let y = {};
     try {
-        y = ySyms.size ? await fetchYahoo([...ySyms]) : {};
+        y = ySyms.size ? await oracle.getPrices([...ySyms]) : {};
     } catch {
         /* keep last good */
     }
@@ -316,8 +299,10 @@ function currentWeightsBps(b, px) {
     return out;
 }
 function targetWeightsBps(b) {
-    const map = weightsToBps(Object.fromEntries(b.legs.map((l) => [l.sym, l.weight])));
-    return map;
+    // Attested indices carry exact bps from the deterministic build; freeform
+    // submissions still quantize their integer-pct weights.
+    if (b.weightsBpsBySym) return b.weightsBpsBySym;
+    return weightsToBps(Object.fromEntries(b.legs.map((l) => [l.sym, l.weight])));
 }
 function navOf(b, px) {
     let nav = 0;
@@ -465,25 +450,39 @@ function refreshChainCfg() {
 // (NVDAx) while prices are keyed by underlying symbol (NVDA), so map through the
 // field legs. The vault reads pool.priceUsdE18() directly for NAV.
 async function pushPricesOnChain(px) {
-    const {cfg, gov, Contract, poolAbi} = chain;
+    if (deployLockHeld()) return {}; // server is deploying: skip our tx writes
+    const {cfg, gov, provider, Contract, poolAbi} = chain;
     const priceByPoolSym = {};
     for (const b of field)
         for (const l of b.legs)
             if (px[l.symbol] > 0) priceByPoolSym[l.sym] = px[l.symbol];
-    for (const [sym, addr] of Object.entries(cfg.pools)) {
-        if (deployLockHeld()) break; // server is deploying: pause our tx writes
-        const p = priceByPoolSym[sym];
-        if (!(p > 0)) continue;
-        try {
+    const targets = Object.entries(cfg.pools).filter(
+        ([sym]) => priceByPoolSym[sym] > 0
+    );
+    if (!targets.length) return {};
+    // Send all price updates in PARALLEL with explicit sequential nonces (one
+    // process, so they don't collide), then await confirmations together - one
+    // block instead of ~21 serial txs. Keeps the tick fast so the NAV series
+    // (and the chart) fills in quickly.
+    const base = await provider.getTransactionCount(gov.address, "pending");
+    await Promise.all(
+        targets.map(([sym, addr], i) => {
             const pool = new Contract(addr, poolAbi, gov);
-            await (await pool.setPriceE18(BigInt(Math.round(p * 1e18)))).wait();
-        } catch (e) {
-            console.error(`pool ${sym} setPrice failed:`, e.message);
-        }
-    }
+            const e18 = BigInt(Math.round(priceByPoolSym[sym] * 1e18));
+            return pool
+                .setPriceE18(e18, {nonce: base + i})
+                .then((tx) => tx.wait())
+                .catch((e) => console.error(`pool ${sym} setPrice failed:`, e.message));
+        })
+    );
     return {};
 }
 // Relay a real FCC-signed rebalance for one index; returns the tx hash.
+// Attested indices send the FULL envelope {vault, nonce, weightsBps, pricesE18,
+// ids, config, matrixCsv} to the enclave INDEX/REBALANCE op (which recomputes
+// the deterministic build and refuses non-matching weights) and price with the
+// oracle's ATTESTED prices. Freeform submissions keep the legacy raw-preimage
+// sign so nothing existing breaks.
 async function rebalanceOnChain(b, px) {
     const {cfg, gov, abi, Contract, vaultAbi, teeSign} = chain;
     const v = cfg.vaults[b.id];
@@ -492,10 +491,32 @@ async function rebalanceOnChain(b, px) {
     const nonce = await vault.nonce();
     const tgt = targetWeightsBps(b);
     const weightsBps = v.order.map((sym) => tgt[sym] ?? 0);
-    const pricesE18 = v.order.map((sym) => {
-        const symbol = b.legs.find((l) => l.sym === sym)?.symbol;
-        return BigInt(Math.round((px[symbol] ?? 0) * 1e18));
-    });
+    const symbolOf = (sym) => b.legs.find((l) => l.sym === sym)?.symbol;
+
+    if (b.attested) {
+        const symbols = v.order.map(symbolOf);
+        const {prices, attestation} = await oracle.getAttestedPrices(symbols);
+        b.lastPriceRound = attestation.timestamp;
+        const pricesE18 = symbols.map((s) => BigInt(Math.round(prices[s] * 1e18)));
+        const msg = abi.encode(
+            ["address", "uint256", "uint16[]", "uint256[]"],
+            [v.addr, nonce, weightsBps, pricesE18]
+        );
+        const envelope = {
+            vault: v.addr,
+            nonce: Number(nonce),
+            weightsBps,
+            pricesE18: pricesE18.map(String),
+            ids: v.order.map((sym) => b.matrixIdBySym[sym]),
+            config: b.config,
+            matrixCsv: loadMatrixCsv(),
+        };
+        const {sig} = await teeSignEnvelope(process.env.TEE_SIGN_URL, envelope, keccak256(msg));
+        const tx = await (await vault.rebalance(weightsBps, pricesE18, sig)).wait();
+        return tx.hash;
+    }
+
+    const pricesE18 = v.order.map((sym) => BigInt(Math.round((px[symbolOf(sym)] ?? 0) * 1e18)));
     const msg = abi.encode(
         ["address", "uint256", "uint16[]", "uint256[]"],
         [v.addr, nonce, weightsBps, pricesE18]
@@ -513,9 +534,9 @@ async function rebalanceOnChain(b, px) {
 async function readChainNav() {
     if (!ON_CHAIN || !chain) return;
     const {cfg, gov, Contract, vaultAbi} = chain;
-    for (const b of field) {
+    await Promise.all(field.map(async (b) => {
         const v = cfg.vaults[b.id];
-        if (!v) continue;
+        if (!v) return;
         try {
             const vault = new Contract(v.addr, vaultAbi, gov);
             const [navE18, shares, deposited] = await Promise.all([
@@ -537,7 +558,27 @@ async function readChainNav() {
         } catch (e) {
             console.error(`navUsdE18 ${b.id} read failed:`, e.message);
         }
+    }));
+}
+
+// Provenance block per index (Phase 6 badges). Attested indices carry the
+// config/matrix pins (plus outputRoot: a pure function of the build); epochId
+// and attestedByCount stay absent until an on-chain epoch submits them. Price
+// fields mirror the oracle: mode + whether rebalance prices are attested.
+function provenanceOf(b) {
+    const p = {
+        priceOracleMode: oracle.mode,
+        priceAttested: oracle.mode !== "raw",
+    };
+    if (b.attested) {
+        p.configVersion = b.config.version;
+        p.matrixHash = MATRIX_HASH;
+        p.outputRoot = b.outputRoot;
+        if (b.epochId != null) p.epochId = b.epochId;
+        if (b.attestedByCount != null) p.attestedByCount = b.attestedByCount;
     }
+    if (b.lastPriceRound != null) p.lastPriceRound = b.lastPriceRound;
+    return p;
 }
 
 // -- Snapshots. Writes live.json (per-index NAV series + rank + reason) and a
@@ -568,6 +609,8 @@ function snapshot(px) {
                 lastReason: b.lastReason ?? "none yet",
                 lastRebalanceAt: b.lastRebalanceAt,
                 onChain: ON_CHAIN,
+                attested: b.attested === true,
+                provenance: provenanceOf(b),
                 owner: b.owner ?? null,
                 mine: b.mine === true,
                 vault: b.vault ?? null,
@@ -618,6 +661,8 @@ function writeLeaderboard(scored, px) {
             weights: Object.fromEntries(b.legs.map((l) => [l.sym, l.weight])),
             strategy: r.strategy,
             strategyName: r.strategyName,
+            attested: r.attested === true ? true : undefined,
+            provenance: r.provenance,
             rebalanceReason: r.lastReason,
             vault: r.vault ?? undefined,
             rebalanceTx: r.rebalanceTx ?? undefined,

@@ -6,11 +6,14 @@
     "engine": "node scripts/live-engine.mjs",
     "compete-setup": "node scripts/compete-setup.mjs",
     "server": "node scripts/server.mjs",
-    "test": "node index/test/strategies.test.mjs"
+    "test": "node index/test/strategies.test.mjs && node --test index/test/build-bridge.test.mjs pipeline/oracle/oracle.test.mjs"
   },
   "dependencies": {
     "@flarenetwork/flare-periphery-contracts": "^0.1.51",
     "@openzeppelin/contracts": "^4.9.6",
     "ethers": "^6.17.0"
+  },
+  "devDependencies": {
+    "viem": "^2.56.8"
   }
 }

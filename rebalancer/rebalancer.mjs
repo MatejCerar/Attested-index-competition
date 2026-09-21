@@ -1,17 +1,21 @@
-// The rebalancer. Per index, per tick: read prices (stub source), compute
-// current portfolio weights from holdings * price, ask the index's strategy
-// shouldRebalance(), and if true compute target holdings, obtain the FCC
-// signature from the tee-node /sign endpoint, and relay the on-chain
-// rebalance(). DRY mode (default, no key) simulates holdings and just logs
-// decisions so it runs without a funded key or a chain.
+// The rebalancer, attested end to end. Per attested index, per tick: weights
+// come from the deterministic build of the index CONFIG over the frozen
+// feature matrix (index/build-index.mjs, the exact module the enclave runs),
+// prices come from the pluggable oracle (pipeline/oracle), and the signature
+// request is the FULL envelope {vault, nonce, weightsBps, pricesE18, ids,
+// config, matrixCsv} sent to the enclave INDEX/REBALANCE op, which refuses to
+// sign weights it cannot reproduce. DRY mode (default, no key) runs the same
+// decisioning and logs the would-be envelope, no chain, no signer.
 import {readFileSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
-import {AbiCoder, JsonRpcProvider, Wallet, Contract} from "ethers";
-import {INDICES, strategyFor} from "../index/indices.mjs";
-import {createStubPriceSource, createUniswapPriceSource} from "../index/prices.mjs";
-import {weightsToBps} from "../index/weights.mjs";
-import {teeSign} from "../enclave/teesign.mjs";
+import {AbiCoder, JsonRpcProvider, Wallet, Contract, keccak256} from "ethers";
+import {ATTESTED_INDICES, strategyForAttested} from "../index/attested-indices.mjs";
+import {buildFromConfig, loadMatrixCsv, matrixHash} from "../index/build-index.mjs";
+import {createOracle} from "../pipeline/oracle/oracle.mjs";
+import {selectableAssets} from "../index/catalog.mjs";
+import {bareTicker, fetchYahoo} from "../scripts/prices.mjs";
+import {teeSignEnvelope} from "../enclave/teesign.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const abi = AbiCoder.defaultAbiCoder();
@@ -20,27 +24,53 @@ const RPC = process.env.RPC ?? "https://coston2-api.flare.network/ext/C/rpc";
 const TEE_SIGN_URL = process.env.TEE_SIGN_URL ?? "http://127.0.0.1:7701/sign";
 const PK = process.env.PK;
 const DRY = process.env.DRY === "1" || !PK;
-// Optional Uniswap V3 pool pricing: POOLS=<path to {SYM: poolAddr}>. When set,
-// prices come from the pools (with the stub as the no-pool fallback), matching
-// how a mainnet deploy prices on real DEX pools with no code change.
-const POOLS = process.env.POOLS;
 
-// The active price source: Uniswap pools if POOLS is set, else the stub.
-function priceSource(provider, Contract) {
-    if (POOLS && provider && Contract) {
-        const pools = JSON.parse(readFileSync(POOLS, "utf8"));
-        return createUniswapPriceSource({
-            provider,
-            pools,
-            fallbackSource: createStubPriceSource(),
-            Contract,
-        });
+// Yahoo live prices with the catalog snapshot as the offline fallback, so DRY
+// runs with zero keys and zero network. Matrix ids are bare large-cap tickers
+// (NVDA, MSFT, ...) so they price directly.
+function catalogPriceMap() {
+    const out = {};
+    for (const a of selectableAssets()) {
+        const t = bareTicker(a);
+        if (a.priceUsd > 0 && out[t] == null) out[t] = a.priceUsd;
     }
-    return createStubPriceSource();
+    return out;
+}
+async function fetchPrices(symbols) {
+    let live = {};
+    try {
+        live = await fetchYahoo(symbols);
+    } catch {
+        /* offline: catalog fallback below */
+    }
+    const snap = catalogPriceMap();
+    const out = {};
+    for (const s of symbols) out[s] = live[s] > 0 ? live[s] : snap[s];
+    return out;
 }
 
-// bps map -> current weights from holdings * price. holdings: {SYM: units1e18}.
-function currentWeightsBps(symbols, holdings, prices) {
+// The full envelope the enclave INDEX/REBALANCE handler validates, plus the
+// abi preimage/digest StableIndexVault.rebalance re-hashes on-chain.
+export function buildRebalanceEnvelope({vault, nonce, ids, weightsBps, prices, config, matrixCsv}) {
+    const pricesE18 = ids.map((id) => BigInt(Math.round(prices[id] * 1e18)));
+    const message = abi.encode(
+        ["address", "uint256", "uint16[]", "uint256[]"],
+        [vault, BigInt(nonce), weightsBps, pricesE18]
+    );
+    const envelope = {
+        vault,
+        nonce: Number(nonce),
+        weightsBps,
+        pricesE18: pricesE18.map(String),
+        ids,
+        config,
+        matrixCsv,
+    };
+    return {envelope, weightsBps, pricesE18, message, digest: keccak256(message)};
+}
+
+// bps map -> current weights from holdings * price. holdings: {SYM: units}.
+export function currentWeightsBps(symbols, holdings, prices) {
     const vals = symbols.map((s) => (holdings[s] || 0) * (prices[s] || 0));
     const total = vals.reduce((a, v) => a + v, 0);
     const out = {};
@@ -50,17 +80,14 @@ function currentWeightsBps(symbols, holdings, prices) {
 }
 
 // Reason string surfaced for the frontend / logs.
-function reasonFor(strategy, ctx) {
-    const {now, lastRebalanceAt, currentWeightsBps: cur, targetWeightsBps: tgt} =
-        ctx;
+export function reasonFor(strategy, ctx) {
+    const {now, lastRebalanceAt, currentWeightsBps: cur, targetWeightsBps: tgt} = ctx;
     if (strategy.driftBps != null) {
         let max = 0;
         for (const s of new Set([...Object.keys(cur), ...Object.keys(tgt)])) {
             max = Math.max(max, Math.abs((cur[s] || 0) - (tgt[s] || 0)));
         }
-        if (max >= strategy.driftBps) {
-            return `drift ${max}bps >= ${strategy.driftBps}bps`;
-        }
+        if (max >= strategy.driftBps) return `drift ${max}bps >= ${strategy.driftBps}bps`;
     }
     if (strategy.intervalMs != null) {
         if (lastRebalanceAt == null) return "first rebalance";
@@ -69,23 +96,21 @@ function reasonFor(strategy, ctx) {
     return "strategy triggered";
 }
 
-function buildRebalanceCall(vaultAddr, nonce, symbols, index, prices) {
-    const bpsMap = weightsToBps(index.weights);
-    const weightsBps = symbols.map((s) => bpsMap[s]);
-    const pricesE18 = symbols.map((s) => BigInt(Math.round(prices[s] * 1e18)));
-    const message = abi.encode(
-        ["address", "uint256", "uint16[]", "uint256[]"],
-        [vaultAddr, nonce, weightsBps, pricesE18]
-    );
-    return {weightsBps, pricesE18, message};
+// Envelope printable in a log line: matrixCsv summarized to size + hash.
+function loggableEnvelope(envelope) {
+    return {
+        ...envelope,
+        matrixCsv: `<${Buffer.byteLength(envelope.matrixCsv)}B keccak256=${matrixHash(envelope.matrixCsv)}>`,
+    };
 }
 
-// One decision + optional execution for a single index.
-async function tickIndex(index, ctx, prices, live) {
-    const symbols = Object.keys(index.weights);
-    const strategy = strategyFor(index);
-    const targetWeightsBps = weightsToBps(index.weights);
-    const curBps = currentWeightsBps(symbols, ctx.holdings, prices);
+// One decision + optional execution for a single attested index. built is the
+// deterministic build {ids, weightsBps}; live is {vault, vaultAddr} or null.
+export async function tickIndex(index, built, ctx, prices, live) {
+    const {ids, weightsBps} = built;
+    const strategy = strategyForAttested(index);
+    const targetWeightsBps = Object.fromEntries(ids.map((id, i) => [id, weightsBps[i]]));
+    const curBps = currentWeightsBps(ids, ctx.holdings, prices);
 
     const decisionCtx = {
         now: ctx.now,
@@ -93,92 +118,93 @@ async function tickIndex(index, ctx, prices, live) {
         currentWeightsBps: curBps,
         targetWeightsBps,
     };
-    const should = strategy.shouldRebalance(decisionCtx);
-    if (!should) {
+    if (!strategy.shouldRebalance(decisionCtx)) {
         return {rebalanced: false, reason: "within band / interval not elapsed"};
     }
     const reason = reasonFor(strategy, decisionCtx);
-    const {weightsBps, pricesE18, message} = buildRebalanceCall(
-        live?.vaultAddr ?? "0x0000000000000000000000000000000000000000",
-        ctx.nonce,
-        symbols,
-        index,
-        prices
-    );
+    const {envelope, pricesE18, digest} = buildRebalanceEnvelope({
+        vault: live?.vaultAddr ?? "0x0000000000000000000000000000000000000000",
+        nonce: ctx.nonce,
+        ids,
+        weightsBps,
+        prices,
+        config: index.config,
+        matrixCsv: loadMatrixCsv(),
+    });
 
     if (!live) {
-        // DRY: move simulated holdings to target, no chain, no key.
-        const nav = symbols.reduce(
-            (a, s) => a + (ctx.holdings[s] || 0) * prices[s],
-            ctx.cashUsd || 0
-        );
-        symbols.forEach((s, i) => {
-            const targetUsd = (nav * weightsBps[i]) / 10000;
-            ctx.holdings[s] = targetUsd / prices[s];
+        // DRY: move simulated holdings to target and log the exact envelope
+        // that a LIVE run would send to the enclave INDEX/REBALANCE op.
+        const nav = ids.reduce((a, s) => a + (ctx.holdings[s] || 0) * prices[s], ctx.cashUsd || 0);
+        ids.forEach((s, i) => {
+            ctx.holdings[s] = (nav * weightsBps[i]) / 10000 / prices[s];
         });
         ctx.cashUsd = 0;
         ctx.nonce++;
         ctx.lastRebalanceAt = ctx.now;
-        return {rebalanced: true, reason, weightsBps, dry: true};
+        console.log(
+            `[rebalancer] would-be INDEX/REBALANCE envelope for ${index.id} (digest ${digest}):\n` +
+                JSON.stringify(loggableEnvelope(envelope), null, 2)
+        );
+        return {rebalanced: true, reason, envelope, dry: true};
     }
 
-    // LIVE: sign via the FCC tee-node and relay the real rebalance.
-    const {sig} = await teeSign(TEE_SIGN_URL, message);
-    const tx = await (
-        await live.vault.rebalance(weightsBps, pricesE18, sig)
-    ).wait();
+    // LIVE: the enclave recomputes buildIndexBps(matrixCsv, config) and signs
+    // only if our weightsBps match; then relay the real on-chain rebalance.
+    const {sig, recovered} = await teeSignEnvelope(TEE_SIGN_URL, envelope, digest);
+    console.log(`[rebalancer] enclave signed ${index.id} digest=${digest} signer=${recovered}`);
+    const tx = await (await live.vault.rebalance(weightsBps, pricesE18, sig)).wait();
     ctx.nonce++;
     ctx.lastRebalanceAt = ctx.now;
-    return {rebalanced: true, reason, weightsBps, txHash: tx.hash};
+    return {rebalanced: true, reason, envelope, txHash: tx.hash};
 }
 
-// DRY run: a few ticks over INDICES, logging decisions. Seeds holdings off
-// target, then applies a deterministic drift so the drift strategies trip.
+// DRY run: a few ticks over the attested indices, logging decisions and the
+// would-be envelopes. Seeds holdings at target, then applies a deterministic
+// drift so the drift strategies trip. Zero keys, zero chain.
 async function runDry({ticks = 3} = {}) {
-    const src = createStubPriceSource();
-    const prices = await src.getPrices();
-    console.log(`[rebalancer] DRY mode, ${INDICES.length} indices, ${ticks} ticks`);
-
+    const oracle = createOracle({mode: "raw", fetchPrices});
+    console.log(
+        `[rebalancer] DRY mode, ${ATTESTED_INDICES.length} attested indices, ${ticks} ticks, oracle=${oracle.mode}`
+    );
     const state = new Map();
-    for (const index of INDICES) {
-        const symbols = Object.keys(index.weights);
-        const bps = weightsToBps(index.weights);
-        // seed holdings at target for a 1000 USD notional
+    const builds = new Map();
+    const allIds = new Set();
+    for (const index of ATTESTED_INDICES) {
+        const built = buildFromConfig(index.config);
+        builds.set(index.id, built);
+        built.ids.forEach((s) => allIds.add(s));
+    }
+    const prices = await oracle.getPrices([...allIds]);
+    for (const index of ATTESTED_INDICES) {
+        const {ids, weightsBps} = builds.get(index.id);
         const nav = 1000;
         const holdings = {};
-        symbols.forEach((s) => {
-            holdings[s] = ((nav * bps[s]) / 10000) / prices[s];
+        ids.forEach((s, i) => {
+            holdings[s] = (nav * weightsBps[i]) / 10000 / prices[s];
         });
-        state.set(index.id, {
-            holdings,
-            cashUsd: 0,
-            nonce: 0,
-            lastRebalanceAt: null,
-        });
+        state.set(index.id, {holdings, cashUsd: 0, nonce: 0, lastRebalanceAt: null});
     }
 
     let now = Date.now();
     for (let t = 0; t < ticks; t++) {
-        // advance the clock past the smallest interval so time-based strats trip
-        now += 700000;
-        // nudge one asset per index to force drift on the drift strategies
-        for (const index of INDICES) {
+        now += 2000000; // past every interval so time-based strats trip
+        for (const index of ATTESTED_INDICES) {
             const ctx = state.get(index.id);
-            const symbols = Object.keys(index.weights);
-            if (t === 0) ctx.holdings[symbols[0]] *= 1.4; // 40% price-move drift
+            const built = builds.get(index.id);
+            if (t === 0) ctx.holdings[built.ids[0]] *= 1.4; // 40% price-move drift
             ctx.now = now;
-            const r = await tickIndex(index, ctx, prices, null);
+            const r = await tickIndex(index, built, ctx, prices, null);
             const tag = r.rebalanced ? "REBALANCE" : "hold";
-            console.log(
-                `[tick ${t}] ${index.id} [${index.strategy}] -> ${tag}: ${r.reason}`
-            );
+            console.log(`[tick ${t}] ${index.id} [${index.strategy}] -> ${tag}: ${r.reason}`);
         }
     }
     console.log("[rebalancer] DRY run complete");
 }
 
-// LIVE run: expects vault addresses per index in a JSON file (VAULTS env path)
-// mapping {indexId: vaultAddr}. Relays one rebalance per index.
+// LIVE run: vault addresses per attested index in a JSON file (VAULTS env
+// path) mapping {indexId: vaultAddr}. Attested oracle prices, envelope-gated
+// enclave signature, one on-chain rebalance per triggered index.
 async function runLive() {
     if (!PK) throw new Error("LIVE mode needs PK");
     const vaultsPath = process.env.VAULTS;
@@ -189,31 +215,38 @@ async function runLive() {
     );
     const provider = new JsonRpcProvider(RPC);
     const signer = new Wallet(PK, provider);
-    const src = priceSource(provider, Contract);
-    const prices = await src.getPrices();
+    // Attested prices: the same TEE signs the price payload the vault-side
+    // SignedPriceOracle would verify. PRICE_SIGN_URL splits the endpoints when
+    // the rebalance signer sits behind the extension gateway.
+    const oracle = createOracle({
+        mode: process.env.PRICE_ORACLE_MODE ?? "enclave-signed",
+        signUrl: process.env.PRICE_SIGN_URL ?? TEE_SIGN_URL,
+    });
 
-    for (const index of INDICES) {
+    for (const index of ATTESTED_INDICES) {
         const addr = vaults[index.id];
         if (!addr) {
             console.log(`[rebalancer] no vault for ${index.id}, skip`);
             continue;
         }
+        const built = buildFromConfig(index.config);
+        const {prices, attestation} = await oracle.getAttestedPrices(built.ids);
         const vault = new Contract(addr, art.abi, signer);
         const nonce = Number(await vault.nonce());
         const holdingsRaw = await vault.getHoldings();
-        const symbols = Object.keys(index.weights);
         const holdings = {};
-        symbols.forEach((s, i) => (holdings[s] = Number(holdingsRaw[i]) / 1e18));
+        built.ids.forEach((s, i) => (holdings[s] = Number(holdingsRaw[i]) / 1e18));
         const ctx = {
             holdings,
-            cashUsd: Number(await vault.cash()) / 1e6, // stub: 6-dec stable
+            cashUsd: Number(await vault.cash()) / 1e6,
             nonce,
             lastRebalanceAt: null,
             now: Date.now(),
         };
-        const r = await tickIndex(index, ctx, prices, {vault, vaultAddr: addr});
+        const r = await tickIndex(index, built, ctx, prices, {vault, vaultAddr: addr});
         console.log(
-            `[rebalancer] ${index.id}: ${r.rebalanced ? "rebalanced " + r.txHash : "held"} (${r.reason})`
+            `[rebalancer] ${index.id}: ${r.rebalanced ? "rebalanced " + r.txHash : "held"} ` +
+                `(${r.reason}; prices ${attestation.mode}, attested=${attestation.mode !== "raw"})`
         );
     }
 }
@@ -224,7 +257,7 @@ async function main() {
 }
 
 // Exported for reuse by the orchestrator and tests.
-export {tickIndex, currentWeightsBps, buildRebalanceCall, reasonFor};
+export {tickIndex as tickAttestedIndex, fetchPrices};
 
 if (import.meta.url === `file://${process.argv[1]}`) {
     main().catch((e) => {

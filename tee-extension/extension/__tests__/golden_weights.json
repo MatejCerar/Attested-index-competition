@@ -1,0 +1,188 @@
+{
+  "matrix": "deterministic-index/example_data/feature_matrix_v1.csv",
+  "config": {
+    "version": 3,
+    "weights": {
+      "pe_forward": -0.04,
+      "ev_ebitda": -0.04,
+      "fcf_yield": 0.08,
+      "dividend_yield": 0.02,
+      "revenue_growth_yoy": 0.1,
+      "gross_margin": 0.04,
+      "return_on_equity": 0.1,
+      "net_debt_to_ebitda": -0.08,
+      "momentum_12m": 0.1,
+      "volatility_90d": -0.06,
+      "moat_strength": 0.1,
+      "management_quality": 0.05,
+      "ai_exposure": 0.06,
+      "demand_durability": 0.05,
+      "regulatory_risk": -0.05,
+      "esg_controversy": -0.03
+    },
+    "normalization": "zscore",
+    "winsor": 0.05,
+    "top_n": 20,
+    "max_weight": 0.1,
+    "sector_cap": 0.3,
+    "weighting": "score_tilt",
+    "eligible_sectors": [],
+    "min_market_cap_usd": 50000000000,
+    "id_col": "ticker",
+    "sector_col": "sector",
+    "market_cap_col": "market_cap_usd"
+  },
+  "tickers": [
+    "GOOGL",
+    "LLY",
+    "V",
+    "AMZN",
+    "COST",
+    "JPM",
+    "XOM",
+    "AAPL",
+    "AVGO",
+    "MSFT",
+    "NVDA",
+    "PLTR"
+  ],
+  "weightsBps": [
+    1000,
+    1000,
+    1000,
+    999,
+    999,
+    999,
+    998,
+    601,
+    601,
+    601,
+    601,
+    601
+  ],
+  "variants": [
+    {
+      "overrides": {
+        "top_n": 6,
+        "max_weight": 0.5,
+        "sector_cap": 1.0
+      },
+      "tickers": [
+        "NVDA",
+        "MSFT",
+        "V",
+        "AAPL",
+        "GOOGL",
+        "AVGO"
+      ],
+      "weightsBps": [
+        4629,
+        3176,
+        1452,
+        460,
+        283,
+        0
+      ]
+    },
+    {
+      "overrides": {
+        "top_n": 6,
+        "max_weight": 0.5,
+        "sector_cap": 1.0,
+        "normalization": "rank"
+      },
+      "tickers": [
+        "MSFT",
+        "NVDA",
+        "V",
+        "GOOGL",
+        "AVGO",
+        "AAPL"
+      ],
+      "weightsBps": [
+        3410,
+        3182,
+        1738,
+        1441,
+        229,
+        0
+      ]
+    },
+    {
+      "overrides": {
+        "top_n": 6,
+        "max_weight": 0.5,
+        "sector_cap": 1.0,
+        "normalization": "minmax"
+      },
+      "tickers": [
+        "NVDA",
+        "MSFT",
+        "V",
+        "AAPL",
+        "GOOGL",
+        "AVGO"
+      ],
+      "weightsBps": [
+        4340,
+        3153,
+        1571,
+        682,
+        254,
+        0
+      ]
+    },
+    {
+      "overrides": {
+        "top_n": 6,
+        "max_weight": 0.5,
+        "sector_cap": 1.0,
+        "winsor": 0.0
+      },
+      "tickers": [
+        "NVDA",
+        "MSFT",
+        "V",
+        "AAPL",
+        "AVGO",
+        "GOOGL"
+      ],
+      "weightsBps": [
+        4947,
+        3058,
+        1336,
+        615,
+        44,
+        0
+      ]
+    },
+    {
+      "overrides": {
+        "top_n": 8,
+        "max_weight": 0.2,
+        "sector_cap": 0.35,
+        "weighting": "equal"
+      },
+      "tickers": [
+        "COST",
+        "GOOGL",
+        "LLY",
+        "V",
+        "AAPL",
+        "AVGO",
+        "MSFT",
+        "NVDA"
+      ],
+      "weightsBps": [
+        1625,
+        1625,
+        1625,
+        1625,
+        875,
+        875,
+        875,
+        875
+      ]
+    }
+  ]
+}

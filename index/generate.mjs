@@ -445,6 +445,9 @@ export const EXAMPLE_REBALANCE_PROMPTS = [
     "daily rebalancing with a 2% drift band, at most twice a day",
     "hands off: only rebalance on 10% aggregate drift, max once a week",
     "aggressive: hourly, or 3% drift, take profit at 5%",
+    "rebalance monthly, or immediately if any name exceeds its cap by 3%, or on an 8% drawdown",
+    "trim on a 5% sector drift, and de-risk if we lag the field by 10%, never more than daily",
+    "defensive: rebalance when the trend flips below the 20-point average or realized vol tops 2%, hourly cooldown",
 ];
 
 // Safe default: hourly or 5% aggregate drift, at most once an hour.
@@ -457,6 +460,12 @@ function fallbackRebalance() {
             driftBps: 500,
             takeProfitPct: null,
             cooldownMs: 3600000,
+            nameBreachBps: null,
+            sectorDriftBps: null,
+            drawdownPct: null,
+            volBandPct: null,
+            trendFlip: null,
+            relativeLagPct: null,
             combine: "any",
             maxStepMoveBps: DEFAULT_MAX_STEP_MOVE_BPS,
             note: "hourly or 5% aggregate drift, 1h cooldown",
@@ -480,11 +489,19 @@ function rebalanceSpecSchema() {
                     driftBps: numOrNull,
                     takeProfitPct: numOrNull,
                     cooldownMs: numOrNull,
+                    nameBreachBps: numOrNull,
+                    sectorDriftBps: numOrNull,
+                    drawdownPct: numOrNull,
+                    volBandPct: numOrNull,
+                    trendFlip: numOrNull,
+                    relativeLagPct: numOrNull,
                     combine: {type: "string", enum: ["any", "all"]},
                     maxStepMoveBps: numOrNull,
                 },
                 required: [
                     "intervalMs", "driftBps", "takeProfitPct", "cooldownMs",
+                    "nameBreachBps", "sectorDriftBps", "drawdownPct",
+                    "volBandPct", "trendFlip", "relativeLagPct",
                     "combine", "maxStepMoveBps",
                 ],
                 additionalProperties: false,
@@ -509,6 +526,18 @@ function buildRebalancePrompt(prompt) {
         `reaches this FRACTION (10% = 0.1)\n` +
         `- cooldownMs: minimum milliseconds between rebalances ("never more than ` +
         `once a day" = 86400000)\n` +
+        `- nameBreachBps: max SINGLE-NAME weight deviation from target in basis ` +
+        `points ("any name exceeds its cap by 3%" = 300)\n` +
+        `- sectorDriftBps: max SECTOR-level weight deviation from target in ` +
+        `basis points, names aggregated by GICS sector (5% sector drift = 500)\n` +
+        `- drawdownPct: rebalance when NAV has fallen this FRACTION from its ` +
+        `running peak (8% drawdown = 0.08); uses NAV history\n` +
+        `- volBandPct: rebalance when the realized volatility of recent ` +
+        `per-tick returns reaches this FRACTION (2% = 0.02); uses NAV history\n` +
+        `- trendFlip: rebalance when NAV crosses below its own moving average; ` +
+        `value is the MA window in series points (default 20); uses NAV history\n` +
+        `- relativeLagPct: rebalance when the index return lags the benchmark ` +
+        `(the field-average return) by this FRACTION (10% = 0.1); uses history\n` +
         `- combine: "any" (default: any enabled trigger fires) or "all" (every ` +
         `enabled trigger must hold at once)\n` +
         `- maxStepMoveBps: refuse a rebalance if any asset price step exceeds ` +
@@ -516,7 +545,9 @@ function buildRebalancePrompt(prompt) {
         `tighter or looser guard\n\n` +
         `Return ONLY compact JSON, no prose, of the form ` +
         `{"name":"...","note":"...","spec":{"intervalMs":n|null,"driftBps":n|null,` +
-        `"takeProfitPct":n|null,"cooldownMs":n|null,"combine":"any|all",` +
+        `"takeProfitPct":n|null,"cooldownMs":n|null,"nameBreachBps":n|null,` +
+        `"sectorDriftBps":n|null,"drawdownPct":n|null,"volBandPct":n|null,` +
+        `"trendFlip":n|null,"relativeLagPct":n|null,"combine":"any|all",` +
         `"maxStepMoveBps":n|null}} where name is short and note restates the ` +
         `policy in one sentence.`
     );

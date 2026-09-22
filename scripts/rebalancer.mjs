@@ -12,7 +12,7 @@ import {dirname, join} from "node:path";
 import {AbiCoder, JsonRpcProvider, Wallet, Contract, keccak256} from "ethers";
 import {ATTESTED_INDICES, strategyForAttested} from "../index/attested-indices.mjs";
 import {coerceRebalanceSpec, evalRebalanceSpec} from "../index/strategies.mjs";
-import {buildFromConfig, loadMatrixCsv, matrixHash} from "../index/build-index.mjs";
+import {buildFromConfig, loadMatrixCsv, matrixHash, parseCsv} from "../index/build-index.mjs";
 import {createOracle} from "./oracle.mjs";
 import {selectableAssets} from "../index/catalog.mjs";
 import {bareTicker, fetchYahoo} from "./prices.mjs";
@@ -72,6 +72,24 @@ export function buildRebalanceEnvelope({vault, nonce, ids, weightsBps, prices, c
     return {envelope, weightsBps, pricesE18, message, digest: keccak256(message)};
 }
 
+// Sector per matrix ticker (frozen matrix `sector` column), loaded once.
+let _sectorByTicker = null;
+function sectorByTicker() {
+    return (_sectorByTicker ??= Object.fromEntries(
+        parseCsv(loadMatrixCsv()).map((r) => [r.ticker, r.sector || "other"])
+    ));
+}
+// Aggregate a {matrixTicker: bps} weight map into {sector: bps}.
+export function sectorWeightsBps(bpsById) {
+    const secOf = sectorByTicker();
+    const out = {};
+    for (const [id, w] of Object.entries(bpsById || {})) {
+        const sec = secOf[id] || "other";
+        out[sec] = (out[sec] || 0) + (w || 0);
+    }
+    return out;
+}
+
 // bps map -> current weights from holdings * price. holdings: {SYM: units}.
 export function currentWeightsBps(symbols, holdings, prices) {
     const vals = symbols.map((s) => (holdings[s] || 0) * (prices[s] || 0));
@@ -121,6 +139,15 @@ export async function tickIndex(index, built, ctx, prices, live) {
         targetWeightsBps,
         nav: ctx.nav,
         lastRebalanceNav: ctx.lastRebalanceNav,
+        // Path-free sector maps mirror the live engine. History-based signals
+        // (drawdown/vol/trend/relative lag) stay cold here: the rebalancer has
+        // no NAV series or field benchmark, so those checks simply do not fire.
+        sectorCurrentBps: sectorWeightsBps(curBps),
+        sectorTargetBps: sectorWeightsBps(targetWeightsBps),
+        navSeries: ctx.navSeries,
+        peakNav: ctx.peakNav,
+        indexReturn: ctx.indexReturn,
+        benchmarkReturn: ctx.benchmarkReturn,
     };
     // A prompt-generated rebalanceSpec on the index drives the decision
     // (cooldown-gated aggregate drift); else the named strategy.

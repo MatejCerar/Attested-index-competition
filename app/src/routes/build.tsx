@@ -65,12 +65,18 @@ const fmtMs = (ms: number) => {
   return `${Math.round(ms / 1000)}s`;
 };
 const fmtPct = (f: number) => `${+f.toFixed(2)}%`;
-// Compact spec readout: interval / drift / take-profit / cooldown / step guard.
+// Compact spec readout: every enabled trigger plus combine + step guard.
 const specReadout = (s: RebalanceSpec) =>
   [
     s.intervalMs != null ? `interval ${fmtMs(s.intervalMs)}` : null,
     s.driftBps != null ? `drift ${fmtPct(s.driftBps / 100)}` : null,
+    s.nameBreachBps != null ? `name breach ${fmtPct(s.nameBreachBps / 100)}` : null,
+    s.sectorDriftBps != null ? `sector drift ${fmtPct(s.sectorDriftBps / 100)}` : null,
     s.takeProfitPct != null ? `take profit ${fmtPct(s.takeProfitPct * 100)}` : null,
+    s.drawdownPct != null ? `drawdown ${fmtPct(s.drawdownPct * 100)}` : null,
+    s.volBandPct != null ? `vol band ${fmtPct(s.volBandPct * 100)}` : null,
+    s.trendFlip != null ? `trend flip ${s.trendFlip}p` : null,
+    s.relativeLagPct != null ? `rel lag ${fmtPct(s.relativeLagPct * 100)}` : null,
     s.cooldownMs != null ? `cooldown ${fmtMs(s.cooldownMs)}` : null,
     `combine ${s.combine}`,
     `step guard ${fmtPct(s.maxStepMoveBps / 100)}`,

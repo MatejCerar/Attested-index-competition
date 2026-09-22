@@ -90,6 +90,33 @@ Default: enclave-signed price per tick. FDC becomes worth wiring only in the
 decentralized mode, at rebalance cadence, when you stop trusting the single
 enclave. See `scripts/oracle.mjs`.
 
+## Rebalance signals
+
+The prompt-generated RebalanceSpec (`index/strategies.mjs`) supports these
+triggers, combined by `combine: any|all` and always gated by `cooldownMs`:
+
+ENCLAVE-REPRODUCIBLE now (path-free: computable from the current tick's
+weights/prices alone, so the sign envelope can verify them):
+
+- `intervalMs`: calendar cadence elapsed.
+- `cooldownMs`: minimum time between rebalances (a gate, not a trigger).
+- `driftBps`: aggregate portfolio drift (one-way turnover vs target).
+- `nameBreachBps`: max single-name |current - target| weight deviation.
+- `sectorDriftBps`: max sector-level deviation, name weights aggregated by the
+  frozen matrix `sector` column.
+- `takeProfitPct`: NAV gain since the last rebalance.
+
+ENGINE-ONLY until attested history is threaded into the sign envelope
+(history-based: they read the engine's NAV series / racing field):
+
+- `drawdownPct`: NAV fallen this fraction from its running peak.
+- `volBandPct`: realized stddev of recent per-tick returns over a small window.
+- `trendFlip`: NAV below its own moving average over the last N points
+  (N = the spec value, default 20).
+- `relativeLagPct`: index return lags the benchmark by this fraction. The
+  benchmark is the FIELD-AVERAGE return this tick (`fieldAverageReturn` in
+  `scripts/live-engine.mjs`); swap that function to change the benchmark.
+
 ## Not yet wired (follow-ups)
 
 - `scripts/compete-setup.mjs` still provisions vaults for the old house ids; it
@@ -99,3 +126,6 @@ enclave. See `scripts/oracle.mjs`.
   freeze a larger matrix when ready.
 - Gated signing requires `TEE_SIGN_URL` to point at the extension gateway
   `/sign`, not the bare tee-node (the bare node has no envelope gate).
+- Attesting the history-based rebalance signals (drawdown, vol band, trend
+  flip, relative lag) requires passing a bounded, attested NAV/price history
+  into the enclave sign path (a future addition).

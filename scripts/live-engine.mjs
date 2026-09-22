@@ -32,7 +32,7 @@ import {underlyingSymbol, bareTicker, fetchYahoo} from "./prices.mjs";
 import {getStrategy, coerceRebalanceSpec, evalRebalanceSpec} from "../index/strategies.mjs";
 import {weightsToBps} from "../index/weights.mjs";
 import {ATTESTED_INDICES} from "../index/attested-indices.mjs";
-import {buildFromConfig, loadMatrixCsv, matrixHash} from "../index/build-index.mjs";
+import {buildFromConfig, loadMatrixCsv, matrixHash, parseCsv} from "../index/build-index.mjs";
 import {createOracle} from "./oracle.mjs";
 import {teeSignEnvelope} from "../enclave/teesign.mjs";
 
@@ -56,6 +56,13 @@ const ON_CHAIN = !!(PK && process.env.TEE_SIGN_URL);
 
 const catalog = JSON.parse(readFileSync(join(__dirname, "catalog.json"), "utf8"));
 const byId = new Map(catalog.assets.map((a) => [a.id, a]));
+
+// Sector per matrix ticker (frozen matrix `sector` column), loaded once. Legs
+// carry their sector so spec sector-drift checks aggregate name weights by it;
+// names outside the matrix fall into "other".
+const sectorByTicker = Object.fromEntries(
+    parseCsv(loadMatrixCsv()).map((r) => [r.ticker, r.sector || "other"])
+);
 
 const pctS = (x) => (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -97,6 +104,7 @@ function attestedEntry(ix) {
             walkSeed: a?.priceUsd ?? null,
             weight: built.weightsBps[i] / 100,
             matrixId: t,
+            sector: sectorByTicker[t] || "other",
         };
     });
     return {
@@ -130,6 +138,7 @@ function buildLegs(b) {
             src: "yahoo",
             walkSeed: a.priceUsd ?? 1, // seed for the walk fallback
             weight,
+            sector: sectorByTicker[bareTicker(a)] || "other",
         };
     });
 }
@@ -166,6 +175,7 @@ function baselineIndex(b, px) {
     b.lastReason = null;
     b.rebalanceTx = b.rebalanceTx ?? null;
     b.series = [];
+    b.peakNav = 0; // running NAV peak for drawdown; updated in stepIndex
     const tgt = targetWeightsBps(b);
     for (const l of b.legs) {
         const p = px[l.symbol] > 0 ? px[l.symbol] : (l.walkSeed ?? 1);
@@ -328,13 +338,40 @@ function rebalance(b, px, reason) {
     b.lastReason = reason;
 }
 
+// Aggregate a {sym: bps} weight map into {sector: bps} via each leg's sector.
+function sectorWeightsBps(b, bySym) {
+    const out = {};
+    for (const l of b.legs) {
+        const sec = l.sector || "other";
+        out[sec] = (out[sec] || 0) + (bySym[l.sym] || 0);
+    }
+    return out;
+}
+
+// This index's return this tick (share-based on-chain, sim off-chain).
+function returnOf(b, nav) {
+    return b.chainRet != null ? b.chainRet : nav / CAPITAL - 1;
+}
+
+// Benchmark for relativeLagPct: the FIELD-AVERAGE return across every racing
+// index this tick. Swap this function to change the benchmark.
+function fieldAverageReturn(px) {
+    if (!field.length) return 0;
+    let sum = 0;
+    for (const b of field) sum += returnOf(b, navOf(b, px));
+    return sum / field.length;
+}
+
 // Decide + apply a rebalance for one index this tick; returns the reason fired.
-// A prompt-generated rebalanceSpec (evalRebalanceSpec, cooldown-gated aggregate
-// drift) takes precedence over the named strategy.
-function stepIndex(b, px, now) {
+// A prompt-generated rebalanceSpec (evalRebalanceSpec, cooldown-gated) takes
+// precedence over the named strategy. History-based signals read b.series (NAV
+// time-series) + the running peak; relative lag compares against the
+// field-average return (benchmarkReturn).
+function stepIndex(b, px, now, benchmarkReturn = null) {
     const cur = currentWeightsBps(b, px);
     const tgt = targetWeightsBps(b);
     const nav = navOf(b, px);
+    if (nav > (b.peakNav ?? 0)) b.peakNav = nav;
     const ctx = {
         now,
         lastRebalanceAt: b.lastRebalanceAt,
@@ -342,6 +379,12 @@ function stepIndex(b, px, now) {
         targetWeightsBps: tgt,
         nav,
         lastRebalanceNav: b.lastRebalanceNav,
+        navSeries: b.series,
+        peakNav: b.peakNav,
+        sectorCurrentBps: sectorWeightsBps(b, cur),
+        sectorTargetBps: sectorWeightsBps(b, tgt),
+        indexReturn: returnOf(b, nav),
+        benchmarkReturn,
     };
     if (b.rebalanceSpec) {
         const r = evalRebalanceSpec(b.rebalanceSpec, ctx);
@@ -766,8 +809,9 @@ async function main() {
                 console.log(
                     `  + submission joined the race: ${b.name} [${b.rebalanceSpec ? "spec: " + (b.rebalanceSpec.note || "custom") : b.strategy}] owner=you`
                 );
+        const benchRet = fieldAverageReturn(tickPx);
         for (const b of field) {
-            const reason = stepIndex(b, tickPx, Date.now());
+            const reason = stepIndex(b, tickPx, Date.now(), benchRet);
             if (reason) {
                 // Skip the on-chain rebalance for a vault with nothing deposited
                 // yet (nav==0 would revert): wait until its owner funds it.

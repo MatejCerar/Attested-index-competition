@@ -17,8 +17,8 @@ the enclave and frozen into a reviewed artifact before anything downstream runs.
    [3] model .......... the ONLY AI step: Haiku labels descriptions -> matrix
         |               (non-deterministic, boxed, then frozen and hashed)
         |
-   [5] builder ........ build_index(matrix, config) -> weightsBps  (PURE)
-        |               canonical, byte-identical in Python and TS
+   [5] builder ........ buildIndex(matrix, config) -> weightsBps  (PURE)
+        |               one canonical TS module, everywhere
         |
    [7] fcc ............ enclave re-runs the builder, attests the weights via
         |               the epoch registry, and refuses to sign a rebalance
@@ -37,7 +37,7 @@ Keeping these separate is what makes the design cheap and trustworthy.
 
 1. Index construction: `(frozen matrix, config) -> weightsBps`. Changes only
    when the matrix or the config version changes, NOT every tick. This is
-   `build_index`. It is what the enclave attests, and it runs rarely.
+   `buildIndex`. It is what the enclave attests, and it runs rarely.
 2. Rebalance execution: `(weights, live prices) -> holdings`. Runs every tick,
    on-chain in the vault.
 
@@ -49,12 +49,12 @@ weights at these attested prices."
 
 | # | Stage | What it does | Where |
 |---|---|---|---|
-| 1 | harness | constrained model calls, JSON-schema-locked output, validation, freeze + human review | `deterministic-index/labeler.py`, `index/generate.mjs` |
-| 2 | features | the feature contract (20 features: 11 NUMERIC, 6 SCORE, 3 LABEL) + the mock feature database (40 large caps) + the frozen matrix | `deterministic-index/features.py`, `deterministic-index/data/`, `deterministic-index/example_data/feature_matrix_v1.csv` |
-| 3 | model | the one AI step: Claude Haiku maps descriptions -> SCORE/LABEL, temperature 0, enum-locked; also the prompt -> config author | `deterministic-index/labeler.py` (MODEL = claude-haiku-4-5), `index/generate.mjs` |
-| 4 | oracle | price source behind one interface: enclave-signed (fast, default), FDC Web2Json (slower, decentralized, optional), raw (dev display feed) | `pipeline/oracle/oracle.mjs`, `pipeline/oracle/SignedPriceOracle.sol` |
-| 5 | builder | the pure deterministic core, canonical and cross-language identical (integer-bps boundary + golden-vector parity test) | `deterministic-index/index_builder.py`, `tee-extension/extension/build-index.ts`, `index/build-index.mjs` (bridge) |
-| 6 | rebalancer | decides when (strategies), builds weights via the bridge, gets prices from the oracle, sends the gated envelope, relays `rebalance()` | `rebalancer/rebalancer.mjs`, `index/strategies.mjs`, `scripts/live-engine.mjs` |
+| 1 | harness | constrained model calls, JSON-schema-locked output, validation, freeze + human review | `index/generate.mjs` |
+| 2 | features | the feature contract (20 features: 11 NUMERIC, 6 SCORE, 3 LABEL) frozen into the matrix | `index/data/feature-matrix.csv` |
+| 3 | model | the one AI step: Claude Haiku authors prompt -> config; the SCORE/LABEL columns of the matrix were labeled the same way, then frozen | `index/generate.mjs` |
+| 4 | oracle | price source behind one interface: enclave-signed (fast, default), FDC Web2Json (slower, decentralized, optional), raw (dev display feed) | `scripts/oracle.mjs`, `src/SignedPriceOracle.sol` |
+| 5 | builder | the pure deterministic core, one canonical TS module (integer-bps boundary) | `tee-extension/extension/build-index.ts`, `index/build-index.mjs` (bridge) |
+| 6 | rebalancer | decides when (strategies), builds weights via the bridge, gets prices from the oracle, sends the gated envelope, relays `rebalance()` | `scripts/rebalancer.mjs`, `index/strategies.mjs`, `scripts/live-engine.mjs` |
 | 7 | fcc | the enclave: `INDEX/BUILD` re-runs the builder and signs an epoch attestation; `INDEX/REBALANCE` re-runs the build and refuses to sign unless the requested weights match | `tee-extension/extension/{handlers,build-index,epoch}.ts`, `src/AttestedEpochRegistry.sol`, `src/libs/IndexWeightLeaf.sol`, `src/consumers/IndexVault.sol` |
 |   | vault | synthetic holdings, stable stays as collateral, redemption capped by real balance, FCC-gated rebalance | `src/IndexShareVault.sol`, `src/StableIndexVault.sol` |
 |   | app | config editor (weights are computed output, not typed) + provenance badges | `app/src/routes/build.tsx`, `app/src/components/provenance-badge.tsx` |
@@ -74,9 +74,9 @@ data." Anyone can re-run the build and check.
 
 ## What is real vs simulated
 
-- Real: the feature contract and builder, the cross-language determinism (proven
-  by a golden-vector test), the enclave build + attestation, the synthetic vault
-  with real stable collateral, the strategies, the live prices (display feed).
+- Real: the feature contract and builder, the enclave build + attestation, the
+  synthetic vault with real stable collateral, the strategies, the live prices
+  (display feed).
 - Simulated / deferred: the TEE hardware attestation is MODE=1 (signing real,
   hardware measurement simulated); FDC price attestation is stubbed to the
   request/proof shape (enclave-signed prices are the working default); the perps
@@ -88,15 +88,14 @@ FTSO is out of scope for now. FDC Web2Json is too slow for the 15s tick (voting
 rounds ~90s+) and adds nothing while the same enclave already signs rebalances.
 Default: enclave-signed price per tick. FDC becomes worth wiring only in the
 decentralized mode, at rebalance cadence, when you stop trusting the single
-enclave. See `pipeline/oracle/README.md`.
+enclave. See `scripts/oracle.mjs`.
 
 ## Not yet wired (follow-ups)
 
 - `scripts/compete-setup.mjs` still provisions vaults for the old house ids; it
   needs updating to the five `attested-*` ids before the on-chain attested path
   resolves `cfg.vaults[id]` (the engine skips gracefully until then).
-- The frozen `example_data/feature_matrix_v1.csv` used by the build is 12 names;
-  the full 40-name mock DB is in `deterministic-index/data/`. Freeze the 40-name
-  matrix when ready.
+- The frozen `index/data/feature-matrix.csv` used by the build is 12 names;
+  freeze a larger matrix when ready.
 - Gated signing requires `TEE_SIGN_URL` to point at the extension gateway
   `/sign`, not the bare tee-node (the bare node has no envelope gate).

@@ -1,6 +1,8 @@
 // Tiny local API server (Node http, no framework). Makes the /build flow real:
-//   POST /api/generate {prompt} -> generateIndex() (real Claude Haiku, catalog
-//     validated); returns {name,rationale,assets,weights,strategy,source}.
+//   POST /api/generate {prompt} -> generateConfig() (real Claude Haiku, schema
+//     validated); returns {name,rationale,config,strategy,source} where config
+//     is a full deterministic IndexConfig, plus legacy {assets,weights}
+//     compatibility fields derived from the deterministic build of that config.
 //   POST /api/add {basket} -> validate against catalog + strategies, append to
 //     user-baskets.json (dedup by id), score with the real rebalance math on
 //     the Uniswap price source (mock pools seeded from the catalog), upsert into
@@ -15,7 +17,7 @@ import {readFileSync, writeFileSync, existsSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
 import {keccak256, toUtf8Bytes} from "ethers";
-import {generateIndex} from "../index/generate.mjs";
+import {generateConfig} from "../index/generate.mjs";
 import {STRATEGIES, getStrategy} from "../index/strategies.mjs";
 import {weightsToBps} from "../index/weights.mjs";
 import {assetIndex} from "../index/catalog.mjs";
@@ -236,8 +238,21 @@ function readBody(req) {
 async function handleGenerate(req, res) {
     const body = await readBody(req);
     if (!body || !body.prompt) return send(res, 400, {error: "prompt required"});
-    const idx = await generateIndex(String(body.prompt));
-    send(res, 200, idx); // idx.source is "live" or FALLBACK_INDEX has source "fallback"
+    const gen = await generateConfig(String(body.prompt)); // never throws
+    // Legacy compatibility: old callers expect {assets, weights} (asset -> pct).
+    // Derive them from the deterministic build of the returned config.
+    let legacy = {};
+    try {
+        const rows = parseCsv(loadMatrixCsv());
+        const {tickers, weightsBps} = buildIndexBps(rows, gen.config);
+        legacy = {
+            assets: tickers,
+            weights: Object.fromEntries(tickers.map((t, i) => [t, weightsBps[i] / 100])),
+        };
+    } catch (e) {
+        console.error("[generate] legacy build preview failed:", String(e));
+    }
+    send(res, 200, {...gen, ...legacy}); // gen.source is "live" | "fallback"
 }
 
 async function handleAdd(req, res) {
@@ -287,8 +302,7 @@ const CONFIG_DEFAULTS = {
 
 // POST /api/build {config} -> deterministic build over the frozen matrix using
 // the SAME module the enclave gate runs. competitive_position (an FE-side
-// eligibility extension) is applied as a row pre-filter, matching the
-// in-browser fallback in app/src/core/build-index.ts.
+// eligibility extension) is applied as a row pre-filter.
 async function handleBuild(req, res) {
     const body = await readBody(req);
     const raw = body && body.config;

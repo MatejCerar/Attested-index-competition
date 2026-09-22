@@ -20,9 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const abi = AbiCoder.defaultAbiCoder();
 
 // The one frozen feature matrix every attested index builds over.
-export const MATRIX_PATH = join(
-    __dirname, "..", "deterministic-index", "example_data", "feature_matrix_v1.csv"
-);
+export const MATRIX_PATH = join(__dirname, "data", "feature-matrix.csv");
 
 let _csv = null;
 export function loadMatrixCsv() {

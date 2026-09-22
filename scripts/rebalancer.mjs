@@ -1,7 +1,7 @@
 // The rebalancer, attested end to end. Per attested index, per tick: weights
 // come from the deterministic build of the index CONFIG over the frozen
 // feature matrix (index/build-index.mjs, the exact module the enclave runs),
-// prices come from the pluggable oracle (pipeline/oracle), and the signature
+// prices come from the pluggable oracle (scripts/oracle.mjs), and the signature
 // request is the FULL envelope {vault, nonce, weightsBps, pricesE18, ids,
 // config, matrixCsv} sent to the enclave INDEX/REBALANCE op, which refuses to
 // sign weights it cannot reproduce. DRY mode (default, no key) runs the same
@@ -12,9 +12,9 @@ import {dirname, join} from "node:path";
 import {AbiCoder, JsonRpcProvider, Wallet, Contract, keccak256} from "ethers";
 import {ATTESTED_INDICES, strategyForAttested} from "../index/attested-indices.mjs";
 import {buildFromConfig, loadMatrixCsv, matrixHash} from "../index/build-index.mjs";
-import {createOracle} from "../pipeline/oracle/oracle.mjs";
+import {createOracle} from "./oracle.mjs";
 import {selectableAssets} from "../index/catalog.mjs";
-import {bareTicker, fetchYahoo} from "../scripts/prices.mjs";
+import {bareTicker, fetchYahoo} from "./prices.mjs";
 import {teeSignEnvelope} from "../enclave/teesign.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -211,7 +211,7 @@ async function runLive() {
     if (!vaultsPath) throw new Error("LIVE mode needs VAULTS=<path to {id:addr}>");
     const vaults = JSON.parse(readFileSync(vaultsPath, "utf8"));
     const art = JSON.parse(
-        readFileSync(join(__dirname, "..", "scripts", "abi", "StableIndexVault.json"), "utf8")
+        readFileSync(join(__dirname, "abi", "StableIndexVault.json"), "utf8")
     );
     const provider = new JsonRpcProvider(RPC);
     const signer = new Wallet(PK, provider);

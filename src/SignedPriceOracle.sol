@@ -33,12 +33,14 @@ contract SignedPriceOracle {
         uint256 timestamp,
         bytes calldata sig
     ) external {
-        if (symbols.length != pricesE18.length || symbols.length == 0)
+        if (symbols.length != pricesE18.length || symbols.length == 0) {
             revert BadLen();
+        }
         if (timestamp < lastTimestamp) revert Stale();
         bytes32 h = keccak256(abi.encode(symbols, pricesE18, timestamp));
-        if (ECDSA.recover(ECDSA.toEthSignedMessageHash(h), sig) != signer)
+        if (ECDSA.recover(ECDSA.toEthSignedMessageHash(h), sig) != signer) {
             revert BadSig();
+        }
         for (uint256 i; i < symbols.length; i++) {
             bytes32 k = keccak256(bytes(symbols[i]));
             priceOf[k] = pricesE18[i];
@@ -48,15 +50,15 @@ contract SignedPriceOracle {
         emit PricesSet(symbols, pricesE18, timestamp);
     }
 
-    function priceUsdE18(
-        string calldata symbol
-    ) external view returns (uint256) {
+    function priceUsdE18(string calldata symbol)
+        external
+        view
+        returns (uint256)
+    {
         return priceOf[keccak256(bytes(symbol))];
     }
 
-    function updatedAt(
-        string calldata symbol
-    ) external view returns (uint256) {
+    function updatedAt(string calldata symbol) external view returns (uint256) {
         return setAt[keccak256(bytes(symbol))];
     }
 }

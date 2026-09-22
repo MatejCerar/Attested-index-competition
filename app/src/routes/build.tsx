@@ -32,15 +32,14 @@ import {
   weightsToUnits,
   type IndexConfig,
   type IndexEntry,
-} from "@/core/build-index.ts";
+} from "@/core/index-config.ts";
 import {recordDeposit} from "@/core/cost-basis.ts";
 import {generateIndex} from "@/core/generate.ts";
 import {
   DEFAULT_STRATEGY,
-  STRATEGY_GROUP_LABELS,
+  STRATEGY_SELECT_DATA,
   STRATEGY_TEMPLATES,
   strategyName,
-  type StrategyGroup,
 } from "@/core/strategies.ts";
 import type {BasketConfig, CatalogAsset, UserBasket} from "@/core/types.ts";
 import {depositOnChain, mintTestUsd} from "@/core/evm-seam.ts";
@@ -53,17 +52,6 @@ const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "index";
 const titleCase = (s: string) =>
   s.split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
-
-// Strategy picker options grouped by intervals / harnesses / combined.
-const STRATEGY_SELECT_DATA = (["intervals", "harnesses", "combined"] as StrategyGroup[]).map(
-  (g) => ({
-    group: STRATEGY_GROUP_LABELS[g],
-    items: STRATEGY_TEMPLATES.filter((s) => s.group === g).map((s) => ({
-      value: s.id,
-      label: s.name,
-    })),
-  })
-);
 
 // Starter prompts for the "Generate from prompt" box (RWA universe).
 const PROMPT_TEMPLATES = [
@@ -118,12 +106,9 @@ export function BuildPage() {
   // The index definition: a config, not typed percentages.
   const [cfg, setCfg] = useState<IndexConfig>(() => structuredClone(HOUSE_CONFIG));
   const [entries, setEntries] = useState<IndexEntry[]>([]);
-  const [previewSource, setPreviewSource] = useState<"server" | "browser">("browser");
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
 
-  // Prompt-generated weights (catalog ids -> pct) override the config output.
-  const [promptWeights, setPromptWeights] = useState<Record<string, number> | null>(null);
   const [name, setName] = useState("");
   const [thesis, setThesis] = useState("");
   const [strategy, setStrategy] = useState<string>(DEFAULT_STRATEGY);
@@ -144,8 +129,8 @@ export function BuildPage() {
     return m;
   }, [allAssets]);
 
-  // Recompute the resulting weights from the config, debounced. Server build
-  // when VITE_BUILD_URL is set, in-browser deterministic port otherwise.
+  // Recompute the resulting weights from the config, debounced. The build runs
+  // on the server (/api/build via VITE_BUILD_URL); no server, no preview.
   useEffect(() => {
     let live = true;
     setPreviewBusy(true);
@@ -153,7 +138,6 @@ export function BuildPage() {
       const res = await previewIndex(cfg);
       if (!live) return;
       setEntries(res.entries);
-      setPreviewSource(res.source);
       setPreviewError(res.ok ? null : (res.error ?? "build failed"));
       setPreviewBusy(false);
     }, 250);
@@ -163,17 +147,8 @@ export function BuildPage() {
     };
   }, [cfg]);
 
-  // The output legs: config-computed (mapped to catalog assets) or, if a
-  // prompt generation is active, its catalog-id weights verbatim.
+  // The output legs: config-computed entries mapped to catalog assets.
   const legs = useMemo<ResultLeg[]>(() => {
-    if (promptWeights) {
-      return Object.entries(promptWeights).map(([id, pct]) => ({
-        key: id,
-        ticker: byId.get(id)?.ticker ?? id,
-        pct,
-        catalogId: id,
-      }));
-    }
     if (!entries.length) return [];
     const mapped = entries.map((e) => ({e, catalogId: mapTicker(e.id, byTicker)}));
     const inCat = mapped.filter((m) => m.catalogId);
@@ -188,18 +163,15 @@ export function BuildPage() {
       pct: catalogId ? (pctById.get(e.id) ?? 0) : Math.round(e.weight * 100),
       catalogId,
     }));
-  }, [promptWeights, entries, byId, byTicker]);
+  }, [entries, byTicker]);
 
   const submitLegs = legs.filter((l) => l.catalogId && l.pct > 0);
-  const unmapped = promptWeights ? [] : legs.filter((l) => !l.catalogId);
+  const unmapped = legs.filter((l) => !l.catalogId);
   const canSubmit = submitLegs.length > 0 && name.trim().length > 0 && !previewBusy;
 
   const setWeight = (feat: string, w: number) =>
     setCfg((c) => ({...c, weights: {...c.weights, [feat]: w}}));
-  const resetConfig = () => {
-    setCfg(structuredClone(HOUSE_CONFIG));
-    setPromptWeights(null);
-  };
+  const resetConfig = () => setCfg(structuredClone(HOUSE_CONFIG));
 
   const runMint = async () => {
     setMinting(true);
@@ -221,20 +193,18 @@ export function BuildPage() {
   };
 
   const runGenerate = async () => {
-    if (!catalog || !genPrompt.trim()) return;
+    if (!genPrompt.trim()) return;
     setGenerating(true);
     try {
-      const g = await generateIndex(genPrompt.trim(), catalog);
-      setPromptWeights(g.weights);
+      const g = await generateIndex(genPrompt.trim());
+      setCfg(g.config);
       setName(g.name);
       setThesis(g.rationale || genPrompt.trim());
       setStrategy(g.strategy);
       notifications.show({
         color: "green",
-        message: `Pre-filled from prompt (${g.source}). Tweak, then add to competition.`,
+        message: `Config pre-filled from prompt (${g.source}). Tweak, then add to competition.`,
       });
-    } catch (e) {
-      notifications.show({color: "red", message: `Generation failed: ${String(e)}`});
     } finally {
       setGenerating(false);
     }
@@ -245,23 +215,21 @@ export function BuildPage() {
     const weights: Record<string, number> = {};
     for (const l of submitLegs) weights[l.catalogId!] = l.pct;
     // Config-built baskets carry the full definition, not just percentages.
-    const basketConfig: BasketConfig | undefined = promptWeights
-      ? undefined
-      : {
-          configVersion: cfg.version,
-          weights: {...cfg.weights},
-          normalization: cfg.normalization,
-          winsor: cfg.winsor,
-          weighting: cfg.weighting,
-          topN: cfg.top_n,
-          maxWeight: cfg.max_weight,
-          sectorCap: cfg.sector_cap,
-          eligibleSectors: [...cfg.eligible_sectors],
-          minMarketCapUsd: cfg.min_market_cap_usd,
-          competitivePosition: cfg.competitive_position.length
-            ? [...cfg.competitive_position]
-            : undefined,
-        };
+    const basketConfig: BasketConfig = {
+      configVersion: cfg.version,
+      weights: {...cfg.weights},
+      normalization: cfg.normalization,
+      winsor: cfg.winsor,
+      weighting: cfg.weighting,
+      topN: cfg.top_n,
+      maxWeight: cfg.max_weight,
+      sectorCap: cfg.sector_cap,
+      eligibleSectors: [...cfg.eligible_sectors],
+      minMarketCapUsd: cfg.min_market_cap_usd,
+      competitivePosition: cfg.competitive_position.length
+        ? [...cfg.competitive_position]
+        : undefined,
+    };
     const basket: UserBasket = {
       id: slug(name),
       name: name.trim(),
@@ -269,7 +237,7 @@ export function BuildPage() {
       kind: "rwa",
       strategy,
       weights,
-      ...(basketConfig ? {config: basketConfig} : {}),
+      config: basketConfig,
     };
 
     setSubmitting(true);
@@ -338,7 +306,6 @@ export function BuildPage() {
       setName("");
       setThesis("");
       setStrategy(DEFAULT_STRATEGY);
-      setPromptWeights(null);
     } finally {
       setSubmitting(false);
     }
@@ -395,9 +362,9 @@ export function BuildPage() {
           ))}
         </Group>
         <Text size="note" c="dimmed" mt={6}>
-          Produces a whole index (name, thesis, assets, weights, strategy) chosen
-          only from the catalog and fills the output panel directly, bypassing
-          the config. Clear it to go back to config-computed weights.
+          Produces a full index config (name, thesis, factor weights, filters,
+          strategy) and loads it into the editor below; the holdings recompute
+          from it like any other config.
         </Text>
       </Card>
 
@@ -619,18 +586,9 @@ export function BuildPage() {
               </Text>
               <Group gap={6}>
                 {previewBusy && <Loader size={14} />}
-                <Badge size="xs" variant="light" color={promptWeights ? "grape" : "blue"}>
-                  {promptWeights
-                    ? "from prompt"
-                    : previewSource === "server"
-                      ? "built on server"
-                      : "built in browser"}
+                <Badge size="xs" variant="light" color="blue">
+                  built on server
                 </Badge>
-                {promptWeights && (
-                  <Button size="compact-xs" variant="subtle" onClick={() => setPromptWeights(null)}>
-                    use config
-                  </Button>
-                )}
               </Group>
             </Group>
             <Text size="note" c="dimmed" mb="xs">
@@ -638,7 +596,7 @@ export function BuildPage() {
               and the holdings recompute.
             </Text>
 
-            {previewError && !promptWeights ? (
+            {previewError ? (
               <Alert color="yellow" variant="light" mb="sm">
                 {previewError}
               </Alert>

@@ -136,6 +136,22 @@ export const intervalHourly = interval(3600000, {
     id: "hourly",
     name: "Hourly",
 });
+// Calendar cadences (7/30/90 days).
+export const intervalWeekly = interval(604800000, {
+    id: "weekly",
+    name: "Weekly",
+    description: "Rebalance once every 7 days.",
+});
+export const intervalMonthly = interval(2592000000, {
+    id: "monthly",
+    name: "Monthly",
+    description: "Rebalance once every 30 days.",
+});
+export const intervalQuarterly = interval(7776000000, {
+    id: "quarterly",
+    name: "Quarterly",
+    description: "Rebalance once every 90 days.",
+});
 // Back-compat aliases (kept: the old ids stay valid).
 export const intervalTenMin = intervalTenMin2;
 export const intervalFiveMin = intervalFiveMin2;
@@ -194,6 +210,9 @@ export const STRATEGY_GROUPS = {
         intervalThirtyMin,
         intervalHourly,
         intervalDaily,
+        intervalWeekly,
+        intervalMonthly,
+        intervalQuarterly,
     ],
     harnesses: [
         drift2pct,

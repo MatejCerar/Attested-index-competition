@@ -1,11 +1,9 @@
 // The ATTESTED house indices: each one is a CONFIG over the frozen feature
-// matrix (deterministic-index/example_data/feature_matrix_v1.csv), never a
-// hand-picked weights map. Weights come exclusively from the deterministic
-// build (index/build-index.mjs -> tee-extension/extension/build-index.ts), so
-// the enclave INDEX/REBALANCE gate reproduces and signs them. The freeform
-// catalog builder stays the off-chain playground; it never enters this path.
-//
-// Config shape mirrors deterministic-index/config.yaml field for field.
+// matrix (index/data/feature-matrix.csv), never a hand-picked weights map.
+// Weights come exclusively from the deterministic build (index/build-index.mjs
+// -> tee-extension/extension/build-index.ts), so the enclave INDEX/REBALANCE
+// gate reproduces and signs them. The freeform catalog builder stays the
+// off-chain playground; it never enters this path.
 import {getStrategy} from "./strategies.mjs";
 
 const BASE = {

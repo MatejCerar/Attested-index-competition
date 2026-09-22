@@ -1,7 +1,7 @@
 // Enclave gateway: a thin CORS-enabled HTTP shim in front of the real Flare TEE
 // extension server. It exposes the SAME /sign contract the index-competition
 // scripts already speak (scripts/compete-setup.mjs, live-engine.mjs, orchestrate-add.mjs,
-// rebalancer/rebalancer.mjs, enclave/teesign.mjs):
+// scripts/rebalancer.mjs, enclave/teesign.mjs):
 //
 //   POST /sign      {message:b64}                       -> {signature:b64}
 //   POST /rebalance {vault,nonce,weights,prices}        -> {signature:b64, ...}

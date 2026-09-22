@@ -1,6 +1,6 @@
 import type {ReactNode} from "react";
 import {createContext, use, useCallback, useMemo, useState} from "react";
-import {weightsToUnits} from "@/core/build-index.ts";
+import {weightsToUnits} from "@/core/index-config.ts";
 
 // The hand-picked working basket, shared between the Universe browser and the
 // manual builder. Weights are relative percentages; they are normalized to a

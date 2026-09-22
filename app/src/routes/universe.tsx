@@ -24,7 +24,7 @@ import {Link} from "@tanstack/react-router";
 import {useMemo, useState} from "react";
 import {addBasket} from "@/core/add.ts";
 import {useBasket} from "@/core/basket-context.tsx";
-import {weightsToUnits} from "@/core/build-index.ts";
+import {weightsToUnits} from "@/core/index-config.ts";
 import {
   DEFAULT_STRATEGY,
   STRATEGY_GROUP_LABELS,

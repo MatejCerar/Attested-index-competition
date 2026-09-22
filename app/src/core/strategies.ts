@@ -18,6 +18,9 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
   {id: "thirty-minute", name: "Thirty minute", description: "Rebalance every thirty minutes.", group: "intervals"},
   {id: "hourly", name: "Hourly", description: "Rebalance once every hour.", group: "intervals"},
   {id: "daily", name: "Daily", description: "Rebalance once a day.", group: "intervals"},
+  {id: "weekly", name: "Weekly", description: "Rebalance once every 7 days.", group: "intervals"},
+  {id: "monthly", name: "Monthly", description: "Rebalance once every 30 days.", group: "intervals"},
+  {id: "quarterly", name: "Quarterly", description: "Rebalance once every 90 days.", group: "intervals"},
   // Harnesses.
   {id: "drift-2", name: "Drift 2%", description: "Rebalance when any asset drifts 2% past target.", group: "harnesses"},
   {id: "drift-5", name: "Drift 5%", description: "Rebalance when any asset drifts 5% past target.", group: "harnesses"},
@@ -79,6 +82,17 @@ export const STRATEGY_GROUP_LABELS: Record<StrategyGroup, string> = {
   harnesses: "Drift + profit harnesses",
   combined: "Combined interval + drift",
 };
+
+// Grouped options for the Mantine strategy Select, shared by all builder modes.
+export const STRATEGY_SELECT_DATA = (
+  ["intervals", "harnesses", "combined"] as StrategyGroup[]
+).map((g) => ({
+  group: STRATEGY_GROUP_LABELS[g],
+  items: STRATEGY_TEMPLATES.filter((s) => s.group === g).map((s) => ({
+    value: s.id,
+    label: s.name,
+  })),
+}));
 
 export const DEFAULT_STRATEGY = "hourly-or-drift-5";
 

@@ -4,7 +4,7 @@ This runbook signs the index rebalance inside a real Flare Confidential Compute
 (FCC) TEE on Coston2, using the `fce-extension-scaffold`. The enclave holds the
 rebalancer key; a valid `StableIndexVault.rebalance()` proves the plan was signed
 in the enclave. Enabling it is pure config: point the project's `TEE_SIGN_URL` at
-the gateway. No edits to `scripts/server.mjs`, the engines, or `rebalancer/`.
+the gateway. No edits to `scripts/server.mjs`, the engines, or `scripts/rebalancer.mjs`.
 
 Everything in this folder is SOURCE only. You copy it into a fresh scaffold
 clone, fill secrets, and run the scaffold's setup script.

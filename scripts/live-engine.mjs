@@ -33,7 +33,7 @@ import {getStrategy} from "../index/strategies.mjs";
 import {weightsToBps} from "../index/weights.mjs";
 import {ATTESTED_INDICES} from "../index/attested-indices.mjs";
 import {buildFromConfig, loadMatrixCsv, matrixHash} from "../index/build-index.mjs";
-import {createOracle} from "../pipeline/oracle/oracle.mjs";
+import {createOracle} from "./oracle.mjs";
 import {teeSignEnvelope} from "../enclave/teesign.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -60,7 +60,7 @@ const byId = new Map(catalog.assets.map((a) => [a.id, a]));
 const pctS = (x) => (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The pluggable price oracle (pipeline/oracle). Off-chain the mode only labels
+// The pluggable price oracle (scripts/oracle.mjs). Off-chain the mode only labels
 // provenance; on-chain (mode enclave-signed) rebalances use attested prices.
 const oracle = createOracle({
     mode: process.env.PRICE_ORACLE_MODE ?? (process.env.TEE_SIGN_URL ? "enclave-signed" : "raw"),

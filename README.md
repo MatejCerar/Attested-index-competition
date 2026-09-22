@@ -84,7 +84,7 @@ Each rebalance then shows up as a real transaction on the Coston2 explorer.
   `index/`.
 - **Rebalancer + strategies** - decides *when* to rebalance (intervals from 1
   minute to daily, drift bands, take-profit, or combinations) and moves the vault
-  back to its target weights. `index/strategies.mjs`, `rebalancer/`.
+  back to its target weights. `index/strategies.mjs`, `scripts/rebalancer.mjs`.
 - **The vault** - `src/StableIndexVault.sol` holds a USD stablecoin and moves its
   holdings on `rebalance()`, which only runs if the TEE signed the weights and
   prices. `src/MockUSDC.sol` is a test stablecoin with a faucet (mint 1000 test
@@ -101,10 +101,12 @@ Each rebalance then shows up as a real transaction on the Coston2 explorer.
 
 ```
 app/            the frontend (Vite + React + Mantine): /build, /leaderboard, /live
-index/          index definitions, strategies, prices, AI generation
-rebalancer/     the rebalance loop
-scripts/        the local API server, the live engine, on-chain setup, the catalog
-src/            Solidity: StableIndexVault, MockUSDC, MockUniswapV3Pool, attestation
+index/          index definitions, strategies, prices, AI generation, the frozen
+                feature matrix (index/data/feature-matrix.csv)
+scripts/        the local API server, the live engine, the rebalance loop, the
+                price oracle, on-chain setup, the catalog
+src/            Solidity: StableIndexVault, MockUSDC, SignedPriceOracle, attestation
+enclave/        the enclave-side signing helpers
 tee-extension/  the enclave (TEE) that signs rebalances, and how to run it (DEPLOY.md)
 DEPLOYMENT.md   the live Coston2 addresses and verified tx hashes
 ```

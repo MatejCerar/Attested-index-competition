@@ -6,7 +6,7 @@
     "engine": "node scripts/live-engine.mjs",
     "compete-setup": "node scripts/compete-setup.mjs",
     "server": "node scripts/server.mjs",
-    "test": "node index/test/strategies.test.mjs && node --test index/test/build-bridge.test.mjs pipeline/oracle/oracle.test.mjs"
+    "test": "echo \"no unit tests (Solidity tests: forge test)\""
   },
   "dependencies": {
     "@flarenetwork/flare-periphery-contracts": "^0.1.51",

@@ -6,8 +6,8 @@
 //   raw             unattested feed for the fast display path
 // Symbols are underlying market symbols (AAPL, GC=F), never token tickers.
 import {AbiCoder, ZeroHash, encodeBytes32String, getBytes, keccak256, verifyMessage} from "ethers";
-import {fetchYahoo} from "../../scripts/prices.mjs";
-import {teeSign} from "../../enclave/teesign.mjs";
+import {fetchYahoo} from "./prices.mjs";
+import {teeSign} from "../enclave/teesign.mjs";
 
 const abi = AbiCoder.defaultAbiCoder();
 const nowSec = () => Math.floor(Date.now() / 1000);

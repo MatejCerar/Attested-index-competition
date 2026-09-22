@@ -85,7 +85,7 @@ function runClaude(prompt, timeoutMs) {
 // with no `claude` CLI. Enabled by setting ANTHROPIC_API_KEY. Raw fetch (Node 22
 // has global fetch) keeps this file dependency-free so the server needs no extra
 // install. Returns the same {ok, out|err} shape as runClaude.
-async function runClaudeApi(prompt, timeoutMs) {
+async function runClaudeApi(prompt, timeoutMs, schema = null) {
     const key = process.env.ANTHROPIC_API_KEY;
     if (!key) return {ok: false, err: "no ANTHROPIC_API_KEY"};
     const ctrl = new AbortController();
@@ -102,6 +102,10 @@ async function runClaudeApi(prompt, timeoutMs) {
                 model: process.env.ANTHROPIC_MODEL || API_MODEL,
                 max_tokens: 1024,
                 messages: [{role: "user", content: prompt}],
+                // Schema-locked output (labeler.py style) when the caller has one.
+                ...(schema
+                    ? {output_config: {format: {type: "json_schema", schema}}}
+                    : {}),
             }),
             signal: ctrl.signal,
         });
@@ -124,10 +128,11 @@ async function runClaudeApi(prompt, timeoutMs) {
 }
 
 // Prefer the API path when a key is configured (headless/server), else fall back
-// to the local `claude` CLI (dev machines with an interactive login).
-function callModel(prompt, timeoutMs) {
+// to the local `claude` CLI (dev machines with an interactive login). The schema
+// only applies on the API path; the CLI path relies on the prompt + validation.
+function callModel(prompt, timeoutMs, schema = null) {
     return process.env.ANTHROPIC_API_KEY
-        ? runClaudeApi(prompt, timeoutMs)
+        ? runClaudeApi(prompt, timeoutMs, schema)
         : runClaude(prompt, timeoutMs);
 }
 
@@ -180,6 +185,250 @@ function buildIndexPrompt(prompt, cands) {
         `summing to 100 over exactly the chosen assets, "strategy" is one of ` +
         `[${STRATEGY_IDS.join(",")}], name is short, rationale is one sentence.`
     );
+}
+
+// ---------------------------------------------------------------------------
+// Prompt -> full deterministic IndexConfig (generateConfig). The config feeds
+// buildFromConfig over the frozen feature matrix; only the config is AI-made.
+// ---------------------------------------------------------------------------
+
+// The 17 SCOREABLE features (11 NUMERIC + 6 SCORE in the frozen feature
+// matrix): [direction, meaning]. LABEL features (sector, market_cap_tier,
+// competitive_position) are filters/caps, never score weights.
+const SCOREABLE = {
+    market_cap_usd: [1, "market capitalization in USD (size)"],
+    pe_forward: [-1, "forward P/E multiple (value: cheaper is better)"],
+    ev_ebitda: [-1, "EV/EBITDA multiple (value: cheaper is better)"],
+    fcf_yield: [1, "free cash flow yield (value)"],
+    dividend_yield: [1, "dividend yield"],
+    revenue_growth_yoy: [1, "year-over-year revenue growth"],
+    gross_margin: [1, "gross margin (quality)"],
+    return_on_equity: [1, "return on equity (quality)"],
+    net_debt_to_ebitda: [-1, "net debt/EBITDA leverage (lower is safer)"],
+    momentum_12m: [1, "12m price return excluding the latest month (momentum)"],
+    volatility_90d: [-1, "90-day annualized volatility (lower is calmer)"],
+    moat_strength: [1, "AI score 0..5: durable competitive advantage"],
+    management_quality: [1, "AI score 0..5: management track record"],
+    ai_exposure: [1, "AI score 0..5: AI relevance of the business"],
+    regulatory_risk: [-1, "AI score 0..5: regulatory threat (lower is safer)"],
+    esg_controversy: [-1, "AI score 0..5: ESG controversies (lower is cleaner)"],
+    demand_durability: [1, "AI score 0..5: demand stability across cycles"],
+};
+
+// The 11 GICS sector labels (feature-matrix `sector` enum).
+const SECTORS = [
+    "energy", "materials", "industrials", "consumer_discretionary",
+    "consumer_staples", "health_care", "financials", "information_technology",
+    "communication_services", "utilities", "real_estate",
+];
+
+const NORMALIZATIONS = ["zscore", "rank", "minmax"];
+const WEIGHTINGS = ["score_tilt", "equal"];
+const DEFAULT_CONFIG_STRATEGY = STRATEGY_IDS.includes("hourly-or-drift-5")
+    ? "hourly-or-drift-5"
+    : DEFAULT_STRATEGY;
+
+// House default: the v3 house weights (attested-indices.mjs BASE).
+const DEFAULT_CONFIG = {
+    version: 3,
+    weights: {
+        pe_forward: -0.04,
+        ev_ebitda: -0.04,
+        fcf_yield: 0.08,
+        dividend_yield: 0.02,
+        revenue_growth_yoy: 0.1,
+        gross_margin: 0.04,
+        return_on_equity: 0.1,
+        net_debt_to_ebitda: -0.08,
+        momentum_12m: 0.1,
+        volatility_90d: -0.06,
+        moat_strength: 0.1,
+        management_quality: 0.05,
+        ai_exposure: 0.06,
+        demand_durability: 0.05,
+        regulatory_risk: -0.05,
+        esg_controversy: -0.03,
+    },
+    normalization: "zscore",
+    winsor: 0.05,
+    weighting: "score_tilt",
+    top_n: 20,
+    max_weight: 0.1,
+    sector_cap: 0.3,
+    eligible_sectors: [],
+    min_market_cap_usd: 50000000000,
+    id_col: "ticker",
+    sector_col: "sector",
+    market_cap_col: "market_cap_usd",
+};
+
+function fallbackConfig() {
+    return {
+        name: "House Factor Index (default)",
+        rationale:
+            "House v3 multi-factor config: value, quality, growth, momentum, low volatility plus AI-scored qualitative factors. Live generation was unavailable.",
+        config: {...DEFAULT_CONFIG, weights: {...DEFAULT_CONFIG.weights}, eligible_sectors: []},
+        strategy: DEFAULT_CONFIG_STRATEGY,
+        source: "fallback",
+    };
+}
+
+// Enum/schema-locked output for the API path (labeler.py build_output_schema
+// style). Every weight is required; the prompt tells the model to use 0 for
+// features it does not want (zeros are dropped in validation).
+function configOutputSchema() {
+    const weightProps = {};
+    for (const f of Object.keys(SCOREABLE)) weightProps[f] = {type: "number"};
+    return {
+        type: "object",
+        properties: {
+            name: {type: "string"},
+            rationale: {type: "string"},
+            config: {
+                type: "object",
+                properties: {
+                    weights: {
+                        type: "object",
+                        properties: weightProps,
+                        required: Object.keys(SCOREABLE),
+                        additionalProperties: false,
+                    },
+                    normalization: {type: "string", enum: NORMALIZATIONS},
+                    weighting: {type: "string", enum: WEIGHTINGS},
+                    winsor: {type: "number"},
+                    top_n: {type: "integer"},
+                    max_weight: {type: "number"},
+                    sector_cap: {type: "number"},
+                    eligible_sectors: {
+                        type: "array",
+                        items: {type: "string", enum: SECTORS},
+                    },
+                    min_market_cap_usd: {type: "number"},
+                },
+                required: [
+                    "weights", "normalization", "weighting", "winsor", "top_n",
+                    "max_weight", "sector_cap", "eligible_sectors", "min_market_cap_usd",
+                ],
+                additionalProperties: false,
+            },
+            strategy: {type: "string", enum: STRATEGY_IDS},
+        },
+        required: ["name", "rationale", "config", "strategy"],
+        additionalProperties: false,
+    };
+}
+
+function buildConfigPrompt(prompt) {
+    const feats = Object.entries(SCOREABLE)
+        .map(([n, [dir, meaning]]) =>
+            `${n} (${dir > 0 ? "positive weight, higher is better" : "NEGATIVE weight, lower is better"}) - ${meaning}`)
+        .join("\n");
+    return (
+        `You are configuring a deterministic factor index built over a frozen ` +
+        `feature matrix of large-cap equities.\n` +
+        `User request: ${prompt}\n\n` +
+        `Scoreable features (assign a signed weight to each; use 0 for features ` +
+        `you do not want; absolute values of the nonzero weights should sum to ` +
+        `about 1; features marked NEGATIVE must get weights <= 0):\n${feats}\n\n` +
+        `GICS sectors for eligible_sectors ([] = allow all):\n${SECTORS.join(", ")}\n\n` +
+        `Rebalance strategy ids (pick the one matching any cadence or drift the ` +
+        `request mentions, e.g. "rebalance weekly" -> weekly, "5% drift" -> drift-5):\n` +
+        `${STRATEGY_IDS.join(", ")}\n\n` +
+        `Return ONLY compact JSON, no prose, of the form ` +
+        `{"name":"...","rationale":"...","config":{"weights":{feature:signedWeight,...},` +
+        `"normalization":"zscore|rank|minmax","weighting":"score_tilt|equal",` +
+        `"winsor":0..0.1,"top_n":int,"max_weight":0..1,"sector_cap":0..1,` +
+        `"eligible_sectors":[...],"min_market_cap_usd":number},"strategy":"id"} ` +
+        `where name is short and rationale is one sentence.`
+    );
+}
+
+const clampNum = (v, lo, hi, dflt) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+};
+
+// Validate + coerce a parsed model object into a full IndexConfig result.
+// Drops non-scoreable weight keys and unknown sectors, enforces the sign
+// convention, renormalizes |weights| to sum 1, clamps caps to feasible ranges,
+// coerces the strategy, and fills every missing field from DEFAULT_CONFIG.
+// Returns null when no usable weights survive.
+export function validateConfig(parsed) {
+    if (!parsed || typeof parsed !== "object") return null;
+    const raw = parsed.config && typeof parsed.config === "object" ? parsed.config : parsed;
+    const weights = {};
+    for (const [k, v] of Object.entries(raw.weights || {})) {
+        const dir = SCOREABLE[k]?.[0];
+        const n = Number(v);
+        if (!dir || !Number.isFinite(n) || n === 0) continue;
+        weights[k] = dir * Math.abs(n); // sign follows the feature direction
+    }
+    const sum = Object.values(weights).reduce((a, w) => a + Math.abs(w), 0);
+    if (!(sum > 0)) return null;
+    for (const k of Object.keys(weights))
+        weights[k] = Math.round((weights[k] / sum) * 1e4) / 1e4;
+
+    const eligible = Array.isArray(raw.eligible_sectors)
+        ? [...new Set(raw.eligible_sectors.filter((s) => SECTORS.includes(s)))]
+        : [];
+    const top_n = Math.round(clampNum(raw.top_n, 1, 50, DEFAULT_CONFIG.top_n));
+    // Feasibility floors: top_n names must be able to carry max_weight each to
+    // 100%, and the allowed sectors must be able to carry sector_cap each.
+    const max_weight = Math.max(
+        clampNum(raw.max_weight, 0.01, 1, DEFAULT_CONFIG.max_weight),
+        1 / top_n
+    );
+    const sector_cap = Math.max(
+        clampNum(raw.sector_cap, 0.01, 1, DEFAULT_CONFIG.sector_cap),
+        1 / (eligible.length || SECTORS.length)
+    );
+    const config = {
+        ...DEFAULT_CONFIG,
+        weights,
+        normalization: NORMALIZATIONS.includes(raw.normalization)
+            ? raw.normalization
+            : DEFAULT_CONFIG.normalization,
+        weighting: WEIGHTINGS.includes(raw.weighting)
+            ? raw.weighting
+            : DEFAULT_CONFIG.weighting,
+        winsor: clampNum(raw.winsor, 0, 0.1, DEFAULT_CONFIG.winsor),
+        top_n,
+        max_weight,
+        sector_cap,
+        eligible_sectors: eligible,
+        min_market_cap_usd: clampNum(
+            raw.min_market_cap_usd, 0, 1e16, DEFAULT_CONFIG.min_market_cap_usd
+        ),
+    };
+    const strategy = STRATEGY_IDS.includes(parsed.strategy)
+        ? parsed.strategy
+        : DEFAULT_CONFIG_STRATEGY;
+    const name = String(parsed.name || "").trim().slice(0, 60) || "Untitled Index";
+    const rationale = String(parsed.rationale || "").trim().slice(0, 240);
+    return {name, rationale, config, strategy};
+}
+
+// Prompt -> {name, rationale, config, strategy, source:"live"|"fallback"} where
+// config is a full IndexConfig over the SCOREABLE features, ready for
+// buildFromConfig / POST /api/build. Never throws: any failure (no CLI or key,
+// timeout, bad JSON, empty after validation) returns the house DEFAULT_CONFIG.
+export async function generateConfig(prompt, {timeoutMs = 45000} = {}) {
+    let res;
+    try {
+        res = await callModel(buildConfigPrompt(prompt), timeoutMs, configOutputSchema());
+    } catch (e) {
+        res = {ok: false, err: String(e)};
+    }
+    if (!res.ok) {
+        console.error(`[gen] config: live-gen unavailable (${res.err}), using fallback`);
+        return fallbackConfig();
+    }
+    const cfg = validateConfig(extractJson(res.out));
+    if (!cfg) {
+        console.error(`[gen] config: unparseable/empty config, using fallback`);
+        return {...fallbackConfig(), raw: res.out.trim()};
+    }
+    return {...cfg, source: "live", raw: res.out.trim()};
 }
 
 // Resolve a model-returned ticker to a catalog id, restricted to the candidate
@@ -314,6 +563,16 @@ async function main() {
             "A balanced basket of the largest tokenized US tech equities.";
         const idx = await generateIndex(prompt);
         console.log(JSON.stringify(idx, (k, v) => (k === "raw" ? undefined : v), 2));
+        return;
+    }
+
+    // Full IndexConfig generation from a single prompt: --config "your prompt"
+    const cfgArg = process.argv.indexOf("--config");
+    if (cfgArg >= 0) {
+        const prompt = process.argv.slice(cfgArg + 1).join(" ").trim() ||
+            "A quality-tilted large-cap index, rebalanced monthly.";
+        const cfg = await generateConfig(prompt);
+        console.log(JSON.stringify(cfg, (k, v) => (k === "raw" ? undefined : v), 2));
         return;
     }
 

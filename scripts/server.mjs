@@ -17,8 +17,8 @@ import {readFileSync, writeFileSync, existsSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
 import {keccak256, toUtf8Bytes} from "ethers";
-import {generateConfig} from "../index/generate.mjs";
-import {STRATEGIES, getStrategy} from "../index/strategies.mjs";
+import {generateConfig, generateRebalanceStrategy} from "../index/generate.mjs";
+import {STRATEGIES, getStrategy, coerceRebalanceSpec} from "../index/strategies.mjs";
 import {weightsToBps} from "../index/weights.mjs";
 import {assetIndex} from "../index/catalog.mjs";
 import {
@@ -100,6 +100,9 @@ function validateBasket(raw, byId) {
     const strategy = STRATEGIES[raw.strategy] ? raw.strategy : "hourly-or-drift";
     const kind = "rwa";
     const name = String(raw.name || "").trim().slice(0, 60) || "Untitled Index";
+    // Optional prompt-generated RebalanceSpec: pass through only when it
+    // coerces to a valid spec, so the live engine can trust it.
+    const rebalanceSpec = coerceRebalanceSpec(raw.rebalanceSpec);
     return {
         id: raw.id ? slug(raw.id) : slug(name),
         name,
@@ -107,6 +110,7 @@ function validateBasket(raw, byId) {
         kind,
         strategy,
         weights: norm,
+        ...(rebalanceSpec ? {rebalanceSpec} : {}),
     };
 }
 
@@ -201,6 +205,7 @@ function appendUserBasket(basket) {
     const rec = {
         id: basket.id, name: basket.name, prompt: basket.prompt,
         kind: basket.kind, strategy: basket.strategy, weights: basket.weights,
+        ...(basket.rebalanceSpec ? {rebalanceSpec: basket.rebalanceSpec} : {}),
         owner: "you", submittedAt: Date.now(),
     };
     if (existing < 0) list.push(rec);
@@ -253,6 +258,16 @@ async function handleGenerate(req, res) {
         console.error("[generate] legacy build preview failed:", String(e));
     }
     send(res, 200, {...gen, ...legacy}); // gen.source is "live" | "fallback"
+}
+
+// POST /api/rebalance-strategy {prompt} -> generateRebalanceStrategy(): a
+// validated RebalanceSpec the live engine evaluates each tick. Never throws;
+// falls back to the safe default spec (source:"fallback").
+async function handleRebalanceStrategy(req, res) {
+    const body = await readBody(req);
+    if (!body || !body.prompt) return send(res, 400, {error: "prompt required"});
+    const {name, note, spec, source} = await generateRebalanceStrategy(String(body.prompt));
+    send(res, 200, {name, note, spec, source});
 }
 
 async function handleAdd(req, res) {
@@ -338,6 +353,8 @@ const server = createServer(async (req, res) => {
         const url = new URL(req.url, `http://localhost:${PORT}`);
         if (req.method === "POST" && url.pathname === "/api/generate")
             return handleGenerate(req, res);
+        if (req.method === "POST" && url.pathname === "/api/rebalance-strategy")
+            return handleRebalanceStrategy(req, res);
         if (req.method === "POST" && url.pathname === "/api/add")
             return handleAdd(req, res);
         if (req.method === "POST" && url.pathname === "/api/build")

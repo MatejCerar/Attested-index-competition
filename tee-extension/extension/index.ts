@@ -71,6 +71,35 @@ export function validateRebalance(r: Rebalance): string | null {
   return null;
 }
 
+export const DEFAULT_MAX_STEP_MOVE_BPS = 2500;
+
+/**
+ * Price-step guard: refuse a price vector whose per-asset step vs the last
+ * signed vector exceeds maxStepMoveBps (|next/prev - 1| > maxStepMoveBps/10000).
+ * Integer bigint math, no float precision loss. Returns the refusal message or
+ * null when every step is in bounds. No prior vector, or a changed composition
+ * (length mismatch), skips the check. Pure: testable without an enclave.
+ */
+export function priceStepGuard(
+  prev: bigint[] | null | undefined,
+  next: bigint[],
+  maxStepMoveBps: number = DEFAULT_MAX_STEP_MOVE_BPS,
+  ids?: string[],
+): string | null {
+  if (!prev || prev.length !== next.length) return null;
+  const bps = BigInt(Math.round(maxStepMoveBps));
+  for (let i = 0; i < next.length; i++) {
+    if (prev[i] <= 0n) continue;
+    const diff = next[i] > prev[i] ? next[i] - prev[i] : prev[i] - next[i];
+    if (diff * 10000n > prev[i] * bps) {
+      const ratio = Number(next[i]) / Number(prev[i]);
+      const label = ids && ids[i] ? ids[i] : `#${i}`;
+      return `price step exceeds guard: ${label} ${ratio.toFixed(4)}`;
+    }
+  }
+  return null;
+}
+
 /**
  * EIP-191 personal_sign of the rebalance digest with the enclave-held TEE key.
  * The recovered signer must equal StableIndexVault.rebalancer.

@@ -36,6 +36,12 @@ import {
 import {recordDeposit} from "@/core/cost-basis.ts";
 import {generateIndex} from "@/core/generate.ts";
 import {
+  REBALANCE_PROMPT_TEMPLATES,
+  generateRebalanceStrategy,
+  type GeneratedRebalance,
+  type RebalanceSpec,
+} from "@/core/rebalance.ts";
+import {
   DEFAULT_STRATEGY,
   STRATEGY_SELECT_DATA,
   STRATEGY_TEMPLATES,
@@ -52,6 +58,25 @@ const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "index";
 const titleCase = (s: string) =>
   s.split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+const fmtMs = (ms: number) => {
+  if (ms % 86400000 === 0) return `${ms / 86400000}d`;
+  if (ms % 3600000 === 0) return `${ms / 3600000}h`;
+  if (ms % 60000 === 0) return `${ms / 60000}m`;
+  return `${Math.round(ms / 1000)}s`;
+};
+const fmtPct = (f: number) => `${+f.toFixed(2)}%`;
+// Compact spec readout: interval / drift / take-profit / cooldown / step guard.
+const specReadout = (s: RebalanceSpec) =>
+  [
+    s.intervalMs != null ? `interval ${fmtMs(s.intervalMs)}` : null,
+    s.driftBps != null ? `drift ${fmtPct(s.driftBps / 100)}` : null,
+    s.takeProfitPct != null ? `take profit ${fmtPct(s.takeProfitPct * 100)}` : null,
+    s.cooldownMs != null ? `cooldown ${fmtMs(s.cooldownMs)}` : null,
+    `combine ${s.combine}`,
+    `step guard ${fmtPct(s.maxStepMoveBps / 100)}`,
+  ]
+    .filter(Boolean)
+    .join(" / ");
 
 // Starter prompts for the "Generate from prompt" box (RWA universe).
 const PROMPT_TEMPLATES = [
@@ -115,6 +140,11 @@ export function BuildPage() {
   const [built, setBuilt] = useState<UserBasket[]>([]);
   const [genPrompt, setGenPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
+  // Prompt 2: the natural-language rebalance rule. When set, it overrides the
+  // named strategy picker on submit.
+  const [rebPrompt, setRebPrompt] = useState("");
+  const [rebGenerating, setRebGenerating] = useState(false);
+  const [reb, setReb] = useState<GeneratedRebalance | null>(null);
 
   const allAssets = useMemo<CatalogAsset[]>(() => {
     if (!catalog) return [];
@@ -210,6 +240,25 @@ export function BuildPage() {
     }
   };
 
+  const runRebalanceGenerate = async () => {
+    if (!rebPrompt.trim()) return;
+    setRebGenerating(true);
+    try {
+      const g = await generateRebalanceStrategy(rebPrompt.trim());
+      setReb(g);
+      notifications.show({
+        color: g.source === "live" ? "green" : "red",
+        title:
+          g.source === "live"
+            ? "Rebalance rule generated"
+            : "Live generation unavailable, default rule applied",
+        message: g.note,
+      });
+    } finally {
+      setRebGenerating(false);
+    }
+  };
+
   const submit = async () => {
     if (!canSubmit || submitting) return;
     const weights: Record<string, number> = {};
@@ -238,6 +287,7 @@ export function BuildPage() {
       strategy,
       weights,
       config: basketConfig,
+      ...(reb ? {rebalanceSpec: reb.spec} : {}),
     };
 
     setSubmitting(true);
@@ -306,6 +356,8 @@ export function BuildPage() {
       setName("");
       setThesis("");
       setStrategy(DEFAULT_STRATEGY);
+      setReb(null);
+      setRebPrompt("");
     } finally {
       setSubmitting(false);
     }
@@ -573,12 +625,82 @@ export function BuildPage() {
               value={strategy}
               onChange={(v) => setStrategy(v ?? DEFAULT_STRATEGY)}
               searchable
+              disabled={reb != null}
               mb={4}
             />
             <Text size="note" c="dimmed" mb="sm">
-              {STRATEGY_TEMPLATES.find((s) => s.id === strategy)?.description ??
-                strategyName(strategy)}
+              {reb
+                ? "Overridden by the generated rebalance rule below. Clear it to use the picker."
+                : (STRATEGY_TEMPLATES.find((s) => s.id === strategy)?.description ??
+                  strategyName(strategy))}
             </Text>
+
+            <Text fw={600} size="sm" mb={4}>
+              How should it rebalance? (optional)
+            </Text>
+            <Text size="note" c="dimmed" mb="xs">
+              Describe the rebalance policy in plain language. A generated rule
+              overrides the strategy picker above.
+            </Text>
+            <Textarea
+              placeholder="e.g. take profit at 10%, otherwise rebalance weekly, never more than once a day"
+              value={rebPrompt}
+              onChange={(e) => setRebPrompt(e.currentTarget.value)}
+              autosize
+              minRows={2}
+              mb="xs"
+            />
+            <Group gap={6} mb="xs">
+              <Text size="note" c="dimmed">
+                Try:
+              </Text>
+              {REBALANCE_PROMPT_TEMPLATES.map((t) => (
+                <Badge
+                  key={t}
+                  variant="light"
+                  color="gray"
+                  style={{cursor: "pointer"}}
+                  onClick={() => setRebPrompt(t)}
+                >
+                  {t}
+                </Badge>
+              ))}
+            </Group>
+            <Group gap="sm" mb="sm">
+              <Button
+                size="compact-sm"
+                loading={rebGenerating}
+                disabled={!rebPrompt.trim()}
+                onClick={runRebalanceGenerate}
+              >
+                Generate rebalance rule
+              </Button>
+              {reb && (
+                <Button size="compact-sm" variant="default" onClick={() => setReb(null)}>
+                  Clear (use picker)
+                </Button>
+              )}
+            </Group>
+            {reb && (
+              <Alert
+                color={reb.source === "live" ? "green" : "yellow"}
+                variant="light"
+                mb="sm"
+                title={reb.name}
+              >
+                <Text size="sm">{reb.note}</Text>
+                <Text size="note" c="dimmed" mt={4} style={{fontVariantNumeric: "tabular-nums"}}>
+                  {specReadout(reb.spec)}
+                </Text>
+                {reb.source === "fallback" && (
+                  <Text size="note" c="red" mt={4}>
+                    Live generation was unavailable; this is the safe default
+                    rule, not your prompt. Clear it to use the picker instead.
+                  </Text>
+                )}
+              </Alert>
+            )}
+            <Divider mb="sm" />
 
             <Group justify="space-between" mb={4}>
               <Text fw={600} size="sm">
@@ -718,7 +840,7 @@ export function BuildPage() {
                         {Object.entries(b.weights)
                           .map(([id, w]) => `${byId.get(id)?.ticker ?? id} ${w}%`)
                           .join(", ")}{" "}
-                        - {b.strategy}
+                        - {b.rebalanceSpec ? "custom rebalance rule" : b.strategy}
                       </Text>
                     </div>
                     <Button

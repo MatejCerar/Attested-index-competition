@@ -6,7 +6,7 @@
 // index's last-good weights and logs that live-gen is unavailable.
 import {spawn} from "node:child_process";
 import {INDICES} from "./indices.mjs";
-import {STRATEGIES} from "./strategies.mjs";
+import {STRATEGIES, coerceRebalanceSpec, DEFAULT_MAX_STEP_MOVE_BPS} from "./strategies.mjs";
 import {candidatesForPrompt, assetIndex, selectableAssets} from "./catalog.mjs";
 
 const MODEL = "claude-haiku-4-5-20251001";
@@ -431,6 +431,132 @@ export async function generateConfig(prompt, {timeoutMs = 45000} = {}) {
     return {...cfg, source: "live", raw: res.out.trim()};
 }
 
+// ---------------------------------------------------------------------------
+// Prompt -> RebalanceSpec (generateRebalanceStrategy). Turns a free-form
+// rebalance policy into the validated trigger spec strategies.mjs
+// evalRebalanceSpec evaluates each tick. Same transport as generateConfig.
+// ---------------------------------------------------------------------------
+
+// Example prompts for the FE chips.
+export const EXAMPLE_REBALANCE_PROMPTS = [
+    "take profit at 10%, otherwise rebalance weekly, never more than once a day",
+    "rebalance only when the portfolio drifts 5% from target",
+    "monthly, but rebalance early if the portfolio gains 20%",
+    "daily rebalancing with a 2% drift band, at most twice a day",
+    "hands off: only rebalance on 10% aggregate drift, max once a week",
+    "aggressive: hourly, or 3% drift, take profit at 5%",
+];
+
+// Safe default: hourly or 5% aggregate drift, at most once an hour.
+function fallbackRebalance() {
+    return {
+        name: "Hourly + 5% drift (default)",
+        note: "Default policy: rebalance hourly or on 5% aggregate drift, at most once an hour. Live generation was unavailable.",
+        spec: {
+            intervalMs: 3600000,
+            driftBps: 500,
+            takeProfitPct: null,
+            cooldownMs: 3600000,
+            combine: "any",
+            maxStepMoveBps: DEFAULT_MAX_STEP_MOVE_BPS,
+            note: "hourly or 5% aggregate drift, 1h cooldown",
+        },
+        source: "fallback",
+    };
+}
+
+// Schema-locked output for the API path (configOutputSchema style).
+function rebalanceSpecSchema() {
+    const numOrNull = {type: ["number", "null"]};
+    return {
+        type: "object",
+        properties: {
+            name: {type: "string"},
+            note: {type: "string"},
+            spec: {
+                type: "object",
+                properties: {
+                    intervalMs: numOrNull,
+                    driftBps: numOrNull,
+                    takeProfitPct: numOrNull,
+                    cooldownMs: numOrNull,
+                    combine: {type: "string", enum: ["any", "all"]},
+                    maxStepMoveBps: numOrNull,
+                },
+                required: [
+                    "intervalMs", "driftBps", "takeProfitPct", "cooldownMs",
+                    "combine", "maxStepMoveBps",
+                ],
+                additionalProperties: false,
+            },
+        },
+        required: ["name", "note", "spec"],
+        additionalProperties: false,
+    };
+}
+
+function buildRebalancePrompt(prompt) {
+    return (
+        `You are turning a natural-language rebalance policy into a JSON ` +
+        `trigger spec for an index vault.\n` +
+        `User request: ${prompt}\n\n` +
+        `Fields (use null for anything the request does not mention):\n` +
+        `- intervalMs: calendar cadence in milliseconds (hourly=3600000, ` +
+        `daily=86400000, weekly=604800000, monthly=2592000000, quarterly=7776000000)\n` +
+        `- driftBps: AGGREGATE portfolio drift trigger in basis points (5% = 500); ` +
+        `total one-way turnover vs target, not a single asset's drift\n` +
+        `- takeProfitPct: rebalance when portfolio gain since the last rebalance ` +
+        `reaches this FRACTION (10% = 0.1)\n` +
+        `- cooldownMs: minimum milliseconds between rebalances ("never more than ` +
+        `once a day" = 86400000)\n` +
+        `- combine: "any" (default: any enabled trigger fires) or "all" (every ` +
+        `enabled trigger must hold at once)\n` +
+        `- maxStepMoveBps: refuse a rebalance if any asset price step exceeds ` +
+        `this many bps (default 2500 = 25%); set only if the request asks for a ` +
+        `tighter or looser guard\n\n` +
+        `Return ONLY compact JSON, no prose, of the form ` +
+        `{"name":"...","note":"...","spec":{"intervalMs":n|null,"driftBps":n|null,` +
+        `"takeProfitPct":n|null,"cooldownMs":n|null,"combine":"any|all",` +
+        `"maxStepMoveBps":n|null}} where name is short and note restates the ` +
+        `policy in one sentence.`
+    );
+}
+
+// Validate + coerce a parsed model object into {name, note, spec}. Returns
+// null when no trigger survives coercion.
+export function validateRebalanceSpec(parsed) {
+    if (!parsed || typeof parsed !== "object") return null;
+    const rawSpec = parsed.spec && typeof parsed.spec === "object" ? parsed.spec : parsed;
+    const spec = coerceRebalanceSpec(rawSpec);
+    if (!spec) return null;
+    const name = String(parsed.name || "").trim().slice(0, 60) || "Custom Rebalance";
+    const note = String(parsed.note || spec.note || "").trim().slice(0, 240);
+    if (note) spec.note = note;
+    return {name, note, spec};
+}
+
+// Prompt -> {name, note, spec, source:"live"|"fallback"}. Never throws: any
+// failure (no CLI or key, timeout, bad JSON, empty after coercion) returns the
+// safe default spec.
+export async function generateRebalanceStrategy(prompt, {timeoutMs = 45000} = {}) {
+    let res;
+    try {
+        res = await callModel(buildRebalancePrompt(prompt), timeoutMs, rebalanceSpecSchema());
+    } catch (e) {
+        res = {ok: false, err: String(e)};
+    }
+    if (!res.ok) {
+        console.error(`[gen] rebalance: live-gen unavailable (${res.err}), using fallback`);
+        return fallbackRebalance();
+    }
+    const v = validateRebalanceSpec(extractJson(res.out));
+    if (!v) {
+        console.error(`[gen] rebalance: unparseable/empty spec, using fallback`);
+        return {...fallbackRebalance(), raw: res.out.trim()};
+    }
+    return {...v, source: "live", raw: res.out.trim()};
+}
+
 // Resolve a model-returned ticker to a catalog id, restricted to the candidate
 // set. Case-insensitive on ticker; prefers an exact match.
 function resolveTicker(ticker, cands) {
@@ -573,6 +699,16 @@ async function main() {
             "A quality-tilted large-cap index, rebalanced monthly.";
         const cfg = await generateConfig(prompt);
         console.log(JSON.stringify(cfg, (k, v) => (k === "raw" ? undefined : v), 2));
+        return;
+    }
+
+    // RebalanceSpec generation from a single prompt: --rebalance "your prompt"
+    const rbArg = process.argv.indexOf("--rebalance");
+    if (rbArg >= 0) {
+        const prompt = process.argv.slice(rbArg + 1).join(" ").trim() ||
+            "rebalance weekly, or on 5% drift, never more than once a day";
+        const rb = await generateRebalanceStrategy(prompt);
+        console.log(JSON.stringify(rb, (k, v) => (k === "raw" ? undefined : v), 2));
         return;
     }
 

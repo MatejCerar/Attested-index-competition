@@ -1,3 +1,5 @@
+import type {RebalanceSpec} from "@/core/rebalance.ts";
+
 // Shared shapes for the catalog universe, leaderboard, and live board. These
 // mirror the JSON the backend writes (scripts/catalog.json,
 // app/public/data/{leaderboard,live}.json) so the app reads it directly.
@@ -170,4 +172,5 @@ export interface UserBasket {
   strategy: string;
   weights: Record<string, number>;
   config?: BasketConfig; // present when built from the config editor
+  rebalanceSpec?: RebalanceSpec; // prompt-generated rule, overrides strategy
 }

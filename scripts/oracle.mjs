@@ -28,6 +28,29 @@ export function verifyEnclaveAttestation(a) {
     return {ok: recovered.toLowerCase() === a.signer.toLowerCase(), recovered};
 }
 
+// Per-symbol price ratio cur/prev; symbols with prev <= 0 (or no cur) are
+// skipped. This is the "ratio of price" the exploit check inspects.
+export function priceRatios(symbols, prevPx, curPx) {
+    const out = {};
+    for (const s of symbols || []) {
+        const prev = prevPx?.[s];
+        const cur = curPx?.[s];
+        if (!(prev > 0) || !(cur > 0)) continue;
+        out[s] = cur / prev;
+    }
+    return out;
+}
+
+// First asset whose one-step move exceeds maxStepMoveBps (|ratio-1| >
+// maxStepMoveBps/10000), or null when every step is within bounds.
+export function stepAnomaly(ratios, maxStepMoveBps = 2500) {
+    const lim = maxStepMoveBps / 10000;
+    for (const [sym, ratio] of Object.entries(ratios || {})) {
+        if (Math.abs(ratio - 1) > lim) return {sym, ratio};
+    }
+    return null;
+}
+
 // Working Web2Json request builder against the Yahoo chart endpoint. jq scales
 // the price to an integer at 1e6 (jq numbers are doubles, 1e18 would lose
 // precision); the consumer rescales to 1e18. messageIntegrityCode is derived

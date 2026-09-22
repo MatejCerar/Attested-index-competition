@@ -16,7 +16,9 @@ import type { Framework, HandlerResult } from "../base/types.js";
 
 import { decodeSayGoodbye } from "./abi.js";
 import {
+  DEFAULT_MAX_STEP_MOVE_BPS,
   encodeRebalance,
+  priceStepGuard,
   rebalanceDigest,
   signRebalance,
   validateRebalance,
@@ -52,6 +54,9 @@ let rebalanceCount = 0;
 let lastDigest = "";
 let indexBuildCount = 0;
 let lastOutputRoot = "";
+// Last SIGNED price vector per vault (lowercased address), for the price-step
+// guard. First rebalance for a vault has no prior, so the check is skipped.
+const lastPricesByVault = new Map<string, bigint[]>();
 
 /** Reset all state. Used by tests; not part of the wire contract. */
 export function resetState(): void {
@@ -63,6 +68,7 @@ export function resetState(): void {
   lastDigest = "";
   indexBuildCount = 0;
   lastOutputRoot = "";
+  lastPricesByVault.clear();
 }
 
 /** Wire handlers to (opType, opCommand) pairs. */
@@ -187,11 +193,15 @@ export function handleSayGoodbye(msg: string): HandlerResult {
  * The message is a hex-encoded UTF-8 JSON envelope:
  *   {"vault": "0x..", "nonce": <n>, "weightsBps": [uint16...],
  *    "pricesE18": ["<dec>"...], "ids": ["TICK"...],
- *    "config": IndexConfig, "matrixCsv": "id,sector,...\n..."}
+ *    "config": IndexConfig, "matrixCsv": "id,sector,...\n...",
+ *    "maxStepMoveBps": <optional, default 2500>}
  * ids[i] names the constituent weightsBps[i] belongs to. Before signing, the
  * enclave recomputes buildIndexBps(matrixCsv, config) and refuses ("weights do
  * not match deterministic build") unless the requested id -> bps mapping
- * equals the recomputed one. Only then it builds the preimage
+ * equals the recomputed one. It also refuses ("price step exceeds guard") any
+ * per-asset price step beyond maxStepMoveBps vs the last vector it signed for
+ * the vault (priceStepGuard; the first rebalance has no prior and skips).
+ * Only then it builds the preimage
  *   abi.encode(address vault, uint256 nonce, uint16[] weightsBps, uint256[] pricesE18),
  * signs keccak256(preimage) with the TEE key (whose address == vault.rebalancer),
  * and returns a JSON {digest, preimage, signature} (signature 0x + 65 bytes,
@@ -224,6 +234,7 @@ export async function handleIndexRebalance(msg: string): Promise<HandlerResult> 
     ids?: unknown;
     config?: unknown;
     matrixCsv?: unknown;
+    maxStepMoveBps?: unknown;
   };
   if (typeof obj.vault !== "string") return [null, 0, "vault must be an address string"];
   if (!Array.isArray(obj.weightsBps)) return [null, 0, "weightsBps must be an array"];
@@ -264,6 +275,23 @@ export async function handleIndexRebalance(msg: string): Promise<HandlerResult> 
   );
   if (mismatch) return [null, 0, mismatch];
 
+  // Price-step guard: refuse a per-asset jump beyond maxStepMoveBps vs the
+  // last vector this enclave signed for the vault (default 2500 = 25%).
+  const maxStepMoveBps =
+    typeof obj.maxStepMoveBps === "number" &&
+    Number.isFinite(obj.maxStepMoveBps) &&
+    obj.maxStepMoveBps > 0
+      ? obj.maxStepMoveBps
+      : DEFAULT_MAX_STEP_MOVE_BPS;
+  const vaultKey = rebalance.vault.toLowerCase();
+  const stepErr = priceStepGuard(
+    lastPricesByVault.get(vaultKey),
+    rebalance.pricesE18,
+    maxStepMoveBps,
+    obj.ids as string[],
+  );
+  if (stepErr) return [null, 0, stepErr];
+
   // Enclave-held config: the rebalancer key (== vault.rebalancer). Optionally
   // pin the vault so the enclave refuses to sign for any other vault.
   const signerKey = process.env.TEE_REBALANCER_KEY as `0x${string}` | undefined;
@@ -288,6 +316,7 @@ export async function handleIndexRebalance(msg: string): Promise<HandlerResult> 
   // 4. Respond
   rebalanceCount++;
   lastDigest = digest;
+  lastPricesByVault.set(vaultKey, rebalance.pricesE18.slice());
   const resp = { digest, preimage, signature };
   return [bytesToHex(Buffer.from(JSON.stringify(resp), "utf-8")), 1, null];
 }

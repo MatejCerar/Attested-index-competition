@@ -29,7 +29,7 @@ import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
 import {keccak256} from "ethers";
 import {underlyingSymbol, bareTicker, fetchYahoo} from "./prices.mjs";
-import {getStrategy} from "../index/strategies.mjs";
+import {getStrategy, coerceRebalanceSpec, evalRebalanceSpec} from "../index/strategies.mjs";
 import {weightsToBps} from "../index/weights.mjs";
 import {ATTESTED_INDICES} from "../index/attested-indices.mjs";
 import {buildFromConfig, loadMatrixCsv, matrixHash} from "../index/build-index.mjs";
@@ -206,6 +206,9 @@ async function pickupSubmissions(px, now) {
         } catch {
             strat = getStrategy("hourly-or-drift-5");
         }
+        // Optional prompt-generated RebalanceSpec: when valid it drives the
+        // decision (evalRebalanceSpec); the named strategy stays as fallback.
+        const spec = coerceRebalanceSpec(raw.rebalanceSpec);
         const b = {
             id: raw.id,
             name: raw.name || "Untitled Index",
@@ -219,6 +222,7 @@ async function pickupSubmissions(px, now) {
             rebalanceTx: ON_CHAIN ? null : SAMPLE_TX,
             txSample: !ON_CHAIN,
             strat,
+            rebalanceSpec: spec,
             legs,
         };
         registerLegs(b);
@@ -325,18 +329,27 @@ function rebalance(b, px, reason) {
 }
 
 // Decide + apply a rebalance for one index this tick; returns the reason fired.
+// A prompt-generated rebalanceSpec (evalRebalanceSpec, cooldown-gated aggregate
+// drift) takes precedence over the named strategy.
 function stepIndex(b, px, now) {
     const cur = currentWeightsBps(b, px);
     const tgt = targetWeightsBps(b);
     const nav = navOf(b, px);
-    const fire = b.strat.shouldRebalance({
+    const ctx = {
         now,
         lastRebalanceAt: b.lastRebalanceAt,
         currentWeightsBps: cur,
         targetWeightsBps: tgt,
         nav,
         lastRebalanceNav: b.lastRebalanceNav,
-    });
+    };
+    if (b.rebalanceSpec) {
+        const r = evalRebalanceSpec(b.rebalanceSpec, ctx);
+        if (!r.fire) return null;
+        rebalance(b, px, r.reason);
+        return r.reason;
+    }
+    const fire = b.strat.shouldRebalance(ctx);
     if (!fire) return null;
     const reason = reasonFor(b, cur, tgt, nav, now);
     rebalance(b, px, reason);
@@ -510,6 +523,10 @@ async function rebalanceOnChain(b, px) {
             ids: v.order.map((sym) => b.matrixIdBySym[sym]),
             config: b.config,
             matrixCsv: loadMatrixCsv(),
+            // Optional enclave price-step guard bound; enclave defaults to 2500.
+            ...(b.rebalanceSpec?.maxStepMoveBps != null
+                ? {maxStepMoveBps: b.rebalanceSpec.maxStepMoveBps}
+                : {}),
         };
         const {sig} = await teeSignEnvelope(process.env.TEE_SIGN_URL, envelope, keccak256(msg));
         const tx = await (await vault.rebalance(weightsBps, pricesE18, sig)).wait();
@@ -599,7 +616,9 @@ function snapshot(px) {
                 prompt: b.prompt,
                 kind: b.kind,
                 strategy: b.strategy,
-                strategyName: b.strat.name,
+                strategyName: b.rebalanceSpec
+                    ? b.rebalanceSpec.note || "Custom rebalance spec"
+                    : b.strat.name,
                 coverage: 1,
                 notExecutable: false,
                 nav,
@@ -744,7 +763,9 @@ async function main() {
         const joined = await pickupSubmissions(tickPx, Date.now());
         if (joined.length)
             for (const b of joined)
-                console.log(`  + submission joined the race: ${b.name} [${b.strategy}] owner=you`);
+                console.log(
+                    `  + submission joined the race: ${b.name} [${b.rebalanceSpec ? "spec: " + (b.rebalanceSpec.note || "custom") : b.strategy}] owner=you`
+                );
         for (const b of field) {
             const reason = stepIndex(b, tickPx, Date.now());
             if (reason) {

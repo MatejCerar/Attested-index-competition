@@ -11,6 +11,7 @@ import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
 import {AbiCoder, JsonRpcProvider, Wallet, Contract, keccak256} from "ethers";
 import {ATTESTED_INDICES, strategyForAttested} from "../index/attested-indices.mjs";
+import {coerceRebalanceSpec, evalRebalanceSpec} from "../index/strategies.mjs";
 import {buildFromConfig, loadMatrixCsv, matrixHash} from "../index/build-index.mjs";
 import {createOracle} from "./oracle.mjs";
 import {selectableAssets} from "../index/catalog.mjs";
@@ -51,7 +52,7 @@ async function fetchPrices(symbols) {
 
 // The full envelope the enclave INDEX/REBALANCE handler validates, plus the
 // abi preimage/digest StableIndexVault.rebalance re-hashes on-chain.
-export function buildRebalanceEnvelope({vault, nonce, ids, weightsBps, prices, config, matrixCsv}) {
+export function buildRebalanceEnvelope({vault, nonce, ids, weightsBps, prices, config, matrixCsv, maxStepMoveBps}) {
     const pricesE18 = ids.map((id) => BigInt(Math.round(prices[id] * 1e18)));
     const message = abi.encode(
         ["address", "uint256", "uint16[]", "uint256[]"],
@@ -65,6 +66,8 @@ export function buildRebalanceEnvelope({vault, nonce, ids, weightsBps, prices, c
         ids,
         config,
         matrixCsv,
+        // Optional enclave price-step guard bound; enclave defaults to 2500.
+        ...(maxStepMoveBps != null ? {maxStepMoveBps} : {}),
     };
     return {envelope, weightsBps, pricesE18, message, digest: keccak256(message)};
 }
@@ -108,7 +111,6 @@ function loggableEnvelope(envelope) {
 // deterministic build {ids, weightsBps}; live is {vault, vaultAddr} or null.
 export async function tickIndex(index, built, ctx, prices, live) {
     const {ids, weightsBps} = built;
-    const strategy = strategyForAttested(index);
     const targetWeightsBps = Object.fromEntries(ids.map((id, i) => [id, weightsBps[i]]));
     const curBps = currentWeightsBps(ids, ctx.holdings, prices);
 
@@ -117,11 +119,24 @@ export async function tickIndex(index, built, ctx, prices, live) {
         lastRebalanceAt: ctx.lastRebalanceAt,
         currentWeightsBps: curBps,
         targetWeightsBps,
+        nav: ctx.nav,
+        lastRebalanceNav: ctx.lastRebalanceNav,
     };
-    if (!strategy.shouldRebalance(decisionCtx)) {
-        return {rebalanced: false, reason: "within band / interval not elapsed"};
+    // A prompt-generated rebalanceSpec on the index drives the decision
+    // (cooldown-gated aggregate drift); else the named strategy.
+    const spec = index.rebalanceSpec ? coerceRebalanceSpec(index.rebalanceSpec) : null;
+    let reason;
+    if (spec) {
+        const r = evalRebalanceSpec(spec, decisionCtx);
+        if (!r.fire) return {rebalanced: false, reason: r.reason};
+        reason = r.reason;
+    } else {
+        const strategy = strategyForAttested(index);
+        if (!strategy.shouldRebalance(decisionCtx)) {
+            return {rebalanced: false, reason: "within band / interval not elapsed"};
+        }
+        reason = reasonFor(strategy, decisionCtx);
     }
-    const reason = reasonFor(strategy, decisionCtx);
     const {envelope, pricesE18, digest} = buildRebalanceEnvelope({
         vault: live?.vaultAddr ?? "0x0000000000000000000000000000000000000000",
         nonce: ctx.nonce,
@@ -130,6 +145,7 @@ export async function tickIndex(index, built, ctx, prices, live) {
         prices,
         config: index.config,
         matrixCsv: loadMatrixCsv(),
+        maxStepMoveBps: spec?.maxStepMoveBps,
     });
 
     if (!live) {
@@ -142,6 +158,7 @@ export async function tickIndex(index, built, ctx, prices, live) {
         ctx.cashUsd = 0;
         ctx.nonce++;
         ctx.lastRebalanceAt = ctx.now;
+        ctx.lastRebalanceNav = nav;
         console.log(
             `[rebalancer] would-be INDEX/REBALANCE envelope for ${index.id} (digest ${digest}):\n` +
                 JSON.stringify(loggableEnvelope(envelope), null, 2)

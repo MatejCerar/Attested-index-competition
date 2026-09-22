@@ -5,6 +5,24 @@
 // any failure, gracefully return the safe default spec with source:"fallback".
 // Never throws.
 
+// Feature-condition trigger: portfolio scope compares the live-weight average
+// of a frozen matrix feature; market scope compares a broad-market proxy
+// signal (market_return, market_vol). Fraction-unit features (yields, growth,
+// margins, vol, market signals) store value as a fraction: 2% = 0.02.
+export interface FeatureCondition {
+  feature: string;
+  scope: "portfolio" | "market";
+  op: "lt" | "gt";
+  value: number;
+}
+
+// Fraction-unit features, for percent display in readouts.
+export const FRACTION_FEATURES = new Set([
+  "fcf_yield", "dividend_yield", "revenue_growth_yoy", "gross_margin",
+  "return_on_equity", "momentum_12m", "volatility_90d",
+  "market_return", "market_vol",
+]);
+
 export interface RebalanceSpec {
   intervalMs: number | null;
   driftBps: number | null;
@@ -16,6 +34,7 @@ export interface RebalanceSpec {
   volBandPct?: number | null; // realized per-tick vol threshold, fraction
   trendFlip?: number | null; // MA window (points); fire when NAV < MA
   relativeLagPct?: number | null; // lag vs field-average return, fraction
+  featureConditions?: FeatureCondition[] | null;
   combine: "any" | "all";
   maxStepMoveBps: number;
   note?: string;
@@ -40,6 +59,9 @@ export const REBALANCE_PROMPT_TEMPLATES = [
   "rebalance monthly, or immediately if any name exceeds its cap by 3%, or on an 8% drawdown",
   "trim on a 5% sector drift, and de-risk if we lag the field by 10%, never more than daily",
   "defensive: rebalance when the trend flips below the 20-point average or realized vol tops 2%, hourly cooldown",
+  "rebalance if the portfolio average dividend yield falls under 2%",
+  "de-risk when market volatility tops 25%",
+  "rebalance monthly, or if the portfolio average forward P/E rises above 30",
 ];
 
 const API = import.meta.env.VITE_API_URL as string | undefined;
@@ -73,6 +95,28 @@ const numOrNull = (v: unknown): number | null => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
+// Light client-side pass over featureConditions; the server coerce
+// (index/strategies.mjs coerceFeatureConditions) is authoritative.
+const sanitizeConditions = (raw: unknown): FeatureCondition[] | null => {
+  if (!Array.isArray(raw)) return null;
+  const out: FeatureCondition[] = [];
+  for (const c of raw) {
+    if (!c || typeof c !== "object") continue;
+    const r = c as Record<string, unknown>;
+    const feature = String(r.feature ?? "").trim();
+    const op = r.op === "lt" || r.op === "gt" ? r.op : null;
+    const value = Number(r.value);
+    if (!feature || !op || !Number.isFinite(value)) continue;
+    out.push({
+      feature,
+      scope: r.scope === "market" ? "market" : "portfolio",
+      op,
+      value,
+    });
+  }
+  return out.length ? out : null;
+};
+
 // Server spec -> client RebalanceSpec; null when no trigger survives.
 function sanitizeSpec(raw: unknown): RebalanceSpec | null {
   if (!raw || typeof raw !== "object") return null;
@@ -87,10 +131,12 @@ function sanitizeSpec(raw: unknown): RebalanceSpec | null {
   const volBandPct = numOrNull(r.volBandPct);
   const trendFlip = numOrNull(r.trendFlip);
   const relativeLagPct = numOrNull(r.relativeLagPct);
+  const featureConditions = sanitizeConditions(r.featureConditions);
   const anyTrigger =
     intervalMs != null || driftBps != null || takeProfitPct != null ||
     nameBreachBps != null || sectorDriftBps != null || drawdownPct != null ||
-    volBandPct != null || trendFlip != null || relativeLagPct != null;
+    volBandPct != null || trendFlip != null || relativeLagPct != null ||
+    featureConditions != null;
   if (!anyTrigger) return null;
   return {
     intervalMs,
@@ -103,6 +149,7 @@ function sanitizeSpec(raw: unknown): RebalanceSpec | null {
     volBandPct,
     trendFlip,
     relativeLagPct,
+    featureConditions,
     combine: r.combine === "all" ? "all" : "any",
     maxStepMoveBps: numOrNull(r.maxStepMoveBps) ?? 2500,
     note: String(r.note ?? "").trim().slice(0, 240) || undefined,

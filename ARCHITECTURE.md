@@ -105,6 +105,14 @@ weights/prices alone, so the sign envelope can verify them):
 - `sectorDriftBps`: max sector-level deviation, name weights aggregated by the
   frozen matrix `sector` column.
 - `takeProfitPct`: NAV gain since the last rebalance.
+- `featureConditions` (scope `portfolio`): {feature, op: lt|gt, value} over the
+  portfolio-weighted average of a frozen matrix numeric column, e.g. "avg
+  dividend_yield < 2%". Signal = sum(liveWeightBps_i * frozenFeature_i) /
+  sum(liveWeightBps_i) over mapped holdings (unmapped names skipped, weight
+  renormalized among the mapped), so it moves every tick as weights drift yet
+  is reproducible from the frozen matrix + live weights alone. Units follow the
+  matrix: yields/growth/margins/vol are fractions (percent form in a spec is
+  coerced, 2 -> 0.02), multiples and 0..5 scores compare as-is.
 
 ENGINE-ONLY until attested history is threaded into the sign envelope
 (history-based: they read the engine's NAV series / racing field):
@@ -116,6 +124,14 @@ ENGINE-ONLY until attested history is threaded into the sign envelope
 - `relativeLagPct`: index return lags the benchmark by this fraction. The
   benchmark is the FIELD-AVERAGE return this tick (`fieldAverageReturn` in
   `scripts/live-engine.mjs`); swap that function to change the benchmark.
+- `featureConditions` (scope `market`): `market_return` (return over the kept
+  proxy price series) and `market_vol` (realized stddev of its recent per-tick
+  returns), both fractions. The proxy is the tokenized S&P 500 ETF
+  (`SPYx::backed-assets-je-limited`, priced off Yahoo SPY); change
+  `MARKET_PROXY_ID` in `scripts/live-engine.mjs` to swap. If the proxy is
+  missing from the catalog the engine falls back to the field-average return
+  and field return dispersion. The rebalancer leaves market scope cold unless a
+  caller supplies `ctx.marketSignals`; cold conditions never fire.
 
 ## Not yet wired (follow-ups)
 
@@ -127,5 +143,6 @@ ENGINE-ONLY until attested history is threaded into the sign envelope
 - Gated signing requires `TEE_SIGN_URL` to point at the extension gateway
   `/sign`, not the bare tee-node (the bare node has no envelope gate).
 - Attesting the history-based rebalance signals (drawdown, vol band, trend
-  flip, relative lag) requires passing a bounded, attested NAV/price history
-  into the enclave sign path (a future addition).
+  flip, relative lag, market-scope feature conditions) requires passing a
+  bounded, attested NAV/price history into the enclave sign path (a future
+  addition).

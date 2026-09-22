@@ -29,7 +29,13 @@ import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
 import {keccak256} from "ethers";
 import {underlyingSymbol, bareTicker, fetchYahoo} from "./prices.mjs";
-import {getStrategy, coerceRebalanceSpec, evalRebalanceSpec} from "../index/strategies.mjs";
+import {
+    getStrategy,
+    coerceRebalanceSpec,
+    evalRebalanceSpec,
+    realizedVol,
+    PORTFOLIO_FEATURES,
+} from "../index/strategies.mjs";
 import {weightsToBps} from "../index/weights.mjs";
 import {ATTESTED_INDICES} from "../index/attested-indices.mjs";
 import {buildFromConfig, loadMatrixCsv, matrixHash, parseCsv} from "../index/build-index.mjs";
@@ -63,6 +69,27 @@ const byId = new Map(catalog.assets.map((a) => [a.id, a]));
 const sectorByTicker = Object.fromEntries(
     parseCsv(loadMatrixCsv()).map((r) => [r.ticker, r.sector || "other"])
 );
+
+// Frozen numeric feature row per matrix ticker, for portfolio-scope feature
+// conditions (spec.featureConditions). Loaded once; legs map to it by matrixId
+// (attested) or bareTicker (freeform); unmapped legs are skipped and
+// portfolioFeatureAvg renormalizes over the mapped weight.
+const featureRowByTicker = Object.fromEntries(
+    parseCsv(loadMatrixCsv()).map((r) => [
+        r.ticker,
+        Object.fromEntries(PORTFOLIO_FEATURES.map((c) => [c, Number(r[c])])),
+    ])
+);
+function featureByAssetOf(b) {
+    if (!b._featureByAsset) {
+        b._featureByAsset = {};
+        for (const l of b.legs) {
+            const row = featureRowByTicker[l.matrixId];
+            if (row) b._featureByAsset[l.sym] = row;
+        }
+    }
+    return b._featureByAsset;
+}
 
 const pctS = (x) => (x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -138,6 +165,7 @@ function buildLegs(b) {
             src: "yahoo",
             walkSeed: a.priceUsd ?? 1, // seed for the walk fallback
             weight,
+            matrixId: bareTicker(a), // frozen-matrix key (feature conditions)
             sector: sectorByTicker[bareTicker(a)] || "other",
         };
     });
@@ -362,12 +390,53 @@ function fieldAverageReturn(px) {
     return sum / field.length;
 }
 
+// -- Market signals for market-scope feature conditions. Broad-market proxy:
+// the tokenized S&P 500 ETF (Backed SPYx), priced live off Yahoo SPY each tick
+// like any leg. Change MARKET_PROXY_ID to swap the proxy. If the id is missing
+// from the catalog, FALLBACK: market_return = the field-average return and
+// market_vol = the stddev (dispersion) of field returns this tick. --
+const MARKET_PROXY_ID = "SPYx::backed-assets-je-limited";
+const marketProxy = byId.get(MARKET_PROXY_ID) ?? null;
+const marketProxySym = marketProxy ? underlyingSymbol(marketProxy) : null;
+if (marketProxy) {
+    ySyms.add(marketProxySym);
+    if (marketProxy.priceUsd > 0 && lastGood[marketProxySym] == null)
+        lastGood[marketProxySym] = marketProxy.priceUsd;
+} else {
+    console.log(`market proxy ${MARKET_PROXY_ID} not in catalog; using field-average fallback for market signals`);
+}
+const marketSeries = []; // proxy price series, capped like NAV series
+
+// Once per tick: extend the proxy series and compute {market_return,
+// market_vol}. market_return = return over the kept series; market_vol =
+// realized stddev of recent per-tick returns (fractions, volBandPct-style).
+function marketSignalsTick(px) {
+    if (marketProxy) {
+        const p = px[marketProxySym];
+        if (p > 0) {
+            marketSeries.push(p);
+            if (marketSeries.length > MAX_POINTS) marketSeries.shift();
+        }
+        if (marketSeries.length < 2) return {market_return: 0, market_vol: 0};
+        return {
+            market_return: marketSeries[marketSeries.length - 1] / marketSeries[0] - 1,
+            market_vol: realizedVol(marketSeries),
+        };
+    }
+    const rets = field.map((b) => returnOf(b, navOf(b, px)));
+    if (rets.length < 2) return {market_return: rets[0] ?? 0, market_vol: 0};
+    const mean = rets.reduce((a, x) => a + x, 0) / rets.length;
+    const varr = rets.reduce((a, x) => a + (x - mean) ** 2, 0) / (rets.length - 1);
+    return {market_return: mean, market_vol: Math.sqrt(varr)};
+}
+
 // Decide + apply a rebalance for one index this tick; returns the reason fired.
 // A prompt-generated rebalanceSpec (evalRebalanceSpec, cooldown-gated) takes
 // precedence over the named strategy. History-based signals read b.series (NAV
 // time-series) + the running peak; relative lag compares against the
-// field-average return (benchmarkReturn).
-function stepIndex(b, px, now, benchmarkReturn = null) {
+// field-average return (benchmarkReturn); feature conditions read the frozen
+// matrix feature rows (featureByAsset) + the market proxy (marketSignals).
+function stepIndex(b, px, now, benchmarkReturn = null, marketSignals = null) {
     const cur = currentWeightsBps(b, px);
     const tgt = targetWeightsBps(b);
     const nav = navOf(b, px);
@@ -385,6 +454,8 @@ function stepIndex(b, px, now, benchmarkReturn = null) {
         sectorTargetBps: sectorWeightsBps(b, tgt),
         indexReturn: returnOf(b, nav),
         benchmarkReturn,
+        featureByAsset: featureByAssetOf(b),
+        marketSignals,
     };
     if (b.rebalanceSpec) {
         const r = evalRebalanceSpec(b.rebalanceSpec, ctx);
@@ -786,6 +857,7 @@ async function main() {
         }
     }
     for (const b of field) baselineIndex(b, px);
+    marketSignalsTick(px); // seed the market-proxy series at t0
     const sampleSym = field[0].legs[0].symbol;
     console.log(`t0 baseline set. sample live price ${sampleSym}=${px[sampleSym]?.toFixed?.(4) ?? px[sampleSym]}`);
     await readChainNav();
@@ -810,8 +882,9 @@ async function main() {
                     `  + submission joined the race: ${b.name} [${b.rebalanceSpec ? "spec: " + (b.rebalanceSpec.note || "custom") : b.strategy}] owner=you`
                 );
         const benchRet = fieldAverageReturn(tickPx);
+        const mkt = marketSignalsTick(tickPx);
         for (const b of field) {
-            const reason = stepIndex(b, tickPx, Date.now(), benchRet);
+            const reason = stepIndex(b, tickPx, Date.now(), benchRet, mkt);
             if (reason) {
                 // Skip the on-chain rebalance for a vault with nothing deposited
                 // yet (nav==0 would revert): wait until its owner funds it.

@@ -11,7 +11,7 @@ import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
 import {AbiCoder, JsonRpcProvider, Wallet, Contract, keccak256} from "ethers";
 import {ATTESTED_INDICES, strategyForAttested} from "../index/attested-indices.mjs";
-import {coerceRebalanceSpec, evalRebalanceSpec} from "../index/strategies.mjs";
+import {coerceRebalanceSpec, evalRebalanceSpec, PORTFOLIO_FEATURES} from "../index/strategies.mjs";
 import {buildFromConfig, loadMatrixCsv, matrixHash, parseCsv} from "../index/build-index.mjs";
 import {createOracle} from "./oracle.mjs";
 import {selectableAssets} from "../index/catalog.mjs";
@@ -79,6 +79,18 @@ function sectorByTicker() {
         parseCsv(loadMatrixCsv()).map((r) => [r.ticker, r.sector || "other"])
     ));
 }
+// Frozen numeric feature row per matrix ticker (portfolio-scope feature
+// conditions). Rebalancer holdings are keyed by matrix ticker already.
+let _featureRowByTicker = null;
+export function featureRowByTicker() {
+    return (_featureRowByTicker ??= Object.fromEntries(
+        parseCsv(loadMatrixCsv()).map((r) => [
+            r.ticker,
+            Object.fromEntries(PORTFOLIO_FEATURES.map((c) => [c, Number(r[c])])),
+        ])
+    ));
+}
+
 // Aggregate a {matrixTicker: bps} weight map into {sector: bps}.
 export function sectorWeightsBps(bpsById) {
     const secOf = sectorByTicker();
@@ -139,11 +151,15 @@ export async function tickIndex(index, built, ctx, prices, live) {
         targetWeightsBps,
         nav: ctx.nav,
         lastRebalanceNav: ctx.lastRebalanceNav,
-        // Path-free sector maps mirror the live engine. History-based signals
-        // (drawdown/vol/trend/relative lag) stay cold here: the rebalancer has
-        // no NAV series or field benchmark, so those checks simply do not fire.
+        // Path-free sector maps + frozen feature rows mirror the live engine
+        // (portfolio-scope feature conditions work here: holdings are keyed by
+        // matrix ticker). History-based signals (drawdown/vol/trend/relative
+        // lag) and MARKET-scope feature conditions stay cold unless the caller
+        // supplies navSeries/marketSignals: cold checks never fire.
         sectorCurrentBps: sectorWeightsBps(curBps),
         sectorTargetBps: sectorWeightsBps(targetWeightsBps),
+        featureByAsset: featureRowByTicker(),
+        marketSignals: ctx.marketSignals,
         navSeries: ctx.navSeries,
         peakNav: ctx.peakNav,
         indexReturn: ctx.indexReturn,

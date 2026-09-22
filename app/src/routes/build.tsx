@@ -36,8 +36,10 @@ import {
 import {recordDeposit} from "@/core/cost-basis.ts";
 import {generateIndex} from "@/core/generate.ts";
 import {
+  FRACTION_FEATURES,
   REBALANCE_PROMPT_TEMPLATES,
   generateRebalanceStrategy,
+  type FeatureCondition,
   type GeneratedRebalance,
   type RebalanceSpec,
 } from "@/core/rebalance.ts";
@@ -65,6 +67,11 @@ const fmtMs = (ms: number) => {
   return `${Math.round(ms / 1000)}s`;
 };
 const fmtPct = (f: number) => `${+f.toFixed(2)}%`;
+// Feature condition -> "avg dividend_yield < 2%" / "market_vol > 25%".
+const condReadout = (c: FeatureCondition) => {
+  const v = FRACTION_FEATURES.has(c.feature) ? fmtPct(c.value * 100) : `${+c.value.toFixed(2)}`;
+  return `${c.scope === "market" ? "" : "avg "}${c.feature} ${c.op === "lt" ? "<" : ">"} ${v}`;
+};
 // Compact spec readout: every enabled trigger plus combine + step guard.
 const specReadout = (s: RebalanceSpec) =>
   [
@@ -77,6 +84,7 @@ const specReadout = (s: RebalanceSpec) =>
     s.volBandPct != null ? `vol band ${fmtPct(s.volBandPct * 100)}` : null,
     s.trendFlip != null ? `trend flip ${s.trendFlip}p` : null,
     s.relativeLagPct != null ? `rel lag ${fmtPct(s.relativeLagPct * 100)}` : null,
+    ...(s.featureConditions ?? []).map(condReadout),
     s.cooldownMs != null ? `cooldown ${fmtMs(s.cooldownMs)}` : null,
     `combine ${s.combine}`,
     `step guard ${fmtPct(s.maxStepMoveBps / 100)}`,

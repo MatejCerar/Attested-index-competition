@@ -39,15 +39,99 @@ export function driftBpsAggregate(currentWeightsBps, targetWeightsBps) {
 // index/generate.mjs generateRebalanceStrategy). Shape:
 //   {intervalMs, driftBps, takeProfitPct, cooldownMs, combine, maxStepMoveBps,
 //    nameBreachBps, sectorDriftBps, drawdownPct, volBandPct, trendFlip,
-//    relativeLagPct, note}
+//    relativeLagPct, featureConditions, note}
 // Path-free triggers (interval, driftBps, nameBreachBps, sectorDriftBps,
-// takeProfitPct) are enclave-reproducible today. History-based triggers
-// (drawdownPct, volBandPct, trendFlip, relativeLagPct) run engine-side only
-// until an attested NAV history is threaded into the sign envelope.
+// takeProfitPct, portfolio-scope featureConditions) are enclave-reproducible
+// today. History-based triggers (drawdownPct, volBandPct, trendFlip,
+// relativeLagPct, market-scope featureConditions) run engine-side only until
+// an attested history is threaded into the sign envelope.
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_MAX_STEP_MOVE_BPS = 2500;
 export const DEFAULT_TREND_WINDOW = 20;
+
+// -- Feature conditions: {feature, scope: "portfolio"|"market", op: "lt"|"gt",
+// value}. Portfolio scope compares the LIVE-weight average of a frozen matrix
+// numeric column (enclave-reproducible: frozen matrix + live weights); market
+// scope compares a broad-market proxy signal (engine-only, history-based). --
+
+// Numeric columns of the frozen feature matrix a portfolio condition may use.
+export const PORTFOLIO_FEATURES = [
+    "market_cap_usd", "pe_forward", "ev_ebitda", "fcf_yield", "dividend_yield",
+    "revenue_growth_yoy", "gross_margin", "return_on_equity",
+    "net_debt_to_ebitda", "momentum_12m", "volatility_90d", "moat_strength",
+    "management_quality", "ai_exposure", "regulatory_risk", "esg_controversy",
+    "demand_durability",
+];
+
+// Market signals from the broad-market proxy price series (live-engine.mjs).
+export const MARKET_FEATURES = ["market_return", "market_vol"];
+
+// Features stored/compared as FRACTIONS (matrix convention: dividend_yield
+// 0.007 = 0.7%). Their condition values accept fraction or percent form
+// (|v| > 1 divides by 100). Everything else (multiples, 0..5 scores,
+// market_cap_usd) is compared as-is.
+export const FRACTION_FEATURES = new Set([
+    "fcf_yield", "dividend_yield", "revenue_growth_yoy", "gross_margin",
+    "return_on_equity", "momentum_12m", "volatility_90d",
+    "market_return", "market_vol",
+]);
+
+const MAX_FEATURE_CONDITIONS = 8;
+
+// Coerce a raw featureConditions array; null when nothing valid survives.
+export function coerceFeatureConditions(raw) {
+    if (!Array.isArray(raw)) return null;
+    const out = [];
+    for (const c of raw) {
+        if (!c || typeof c !== "object") continue;
+        const feature = String(c.feature || "").trim();
+        const scope = c.scope === "market" ? "market" : "portfolio";
+        const known = scope === "market"
+            ? MARKET_FEATURES.includes(feature)
+            : PORTFOLIO_FEATURES.includes(feature);
+        if (!known) continue;
+        const op = c.op === "lt" || c.op === "gt" ? c.op : null;
+        if (!op) continue;
+        let value = Number(c.value);
+        if (!Number.isFinite(value)) continue;
+        if (FRACTION_FEATURES.has(feature)) {
+            if (Math.abs(value) > 1) value /= 100; // percent form
+            value = Math.min(10, Math.max(-10, value));
+        } else {
+            value = Math.min(1e16, Math.max(-1e16, value));
+        }
+        out.push({feature, scope, op, value});
+        if (out.length >= MAX_FEATURE_CONDITIONS) break;
+    }
+    return out.length ? out : null;
+}
+
+// Portfolio-weighted feature average: sum(w_i * f_i) / sum(w_i) over holdings
+// with a mapped, finite feature value; unmapped names are skipped and the
+// weight renormalizes among the mapped ones. weightsBps: {SYM: bps};
+// featureByAsset: {SYM: {feature: value}}. null when nothing is mapped.
+export function portfolioFeatureAvg(weightsBps, featureByAsset, feature) {
+    let num = 0;
+    let den = 0;
+    for (const [sym, bps] of Object.entries(weightsBps || {})) {
+        if (!(bps > 0)) continue;
+        const v = Number(featureByAsset?.[sym]?.[feature]);
+        if (!Number.isFinite(v)) continue;
+        num += bps * v;
+        den += bps;
+    }
+    return den > 0 ? num / den : null;
+}
+
+// Market-signal read: null (cold, never fires) when the engine supplied none.
+export function marketSignal(marketSignals, feature) {
+    const v = Number(marketSignals?.[feature]);
+    return Number.isFinite(v) ? v : null;
+}
+
+const fmtFeatureVal = (feature, v) =>
+    FRACTION_FEATURES.has(feature) ? `${(v * 100).toFixed(2)}%` : `${+v.toFixed(2)}`;
 
 // -- Pure signal helpers. All take plain values, no engine state. --
 
@@ -136,10 +220,12 @@ export function coerceRebalanceSpec(raw) {
               ? Math.round(clampOrNull(raw.trendFlip, 3, 500))
               : null;
     const relativeLagPct = fracOrNull(raw.relativeLagPct, 0.95);
+    const featureConditions = coerceFeatureConditions(raw.featureConditions);
     const anyTrigger =
         intervalMs != null || driftBps != null || takeProfitPct != null ||
         nameBreach != null || sectorBand != null || drawdownPct != null ||
-        volBandPct != null || trendFlip != null || relativeLagPct != null;
+        volBandPct != null || trendFlip != null || relativeLagPct != null ||
+        featureConditions != null;
     if (!anyTrigger) return null;
     return {
         intervalMs,
@@ -152,6 +238,7 @@ export function coerceRebalanceSpec(raw) {
         volBandPct,
         trendFlip,
         relativeLagPct,
+        featureConditions,
         combine: raw.combine === "all" ? "all" : "any",
         maxStepMoveBps:
             clampOrNull(raw.maxStepMoveBps, 100, 10000) ?? DEFAULT_MAX_STEP_MOVE_BPS,
@@ -165,8 +252,10 @@ export function coerceRebalanceSpec(raw) {
 // AGGREGATE portfolio drift (driftBpsAggregate), not a single asset's;
 // nameBreachBps is the per-name band. History-based triggers (drawdownPct,
 // volBandPct, trendFlip, relativeLagPct) need navSeries/peakNav/returns in ctx
-// and silently stay cold when the engine did not supply them. reason names the
-// FIRST firing signal.
+// and silently stay cold when the engine did not supply them. Feature
+// conditions read ctx.featureByAsset (portfolio scope) / ctx.marketSignals
+// (market scope) and also stay cold when unsupplied. reason names the FIRST
+// firing signal.
 export function evalRebalanceSpec(spec, ctx) {
     const {
         now,
@@ -181,6 +270,8 @@ export function evalRebalanceSpec(spec, ctx) {
         sectorTargetBps,
         indexReturn,
         benchmarkReturn,
+        featureByAsset,
+        marketSignals,
     } = ctx || {};
     if (
         spec.cooldownMs != null &&
@@ -254,6 +345,24 @@ export function evalRebalanceSpec(spec, ctx) {
             hit: lag >= spec.relativeLagPct,
             reason: `relative lag ${(lag * 100).toFixed(2)}% >= ${spec.relativeLagPct * 100}% vs field avg`,
         });
+    }
+    if (spec.featureConditions) {
+        for (const c of spec.featureConditions) {
+            const v = c.scope === "market"
+                ? marketSignal(marketSignals, c.feature)
+                : portfolioFeatureAvg(currentWeightsBps, featureByAsset, c.feature);
+            if (v == null) {
+                // Cold: no feature map / market signals supplied. Never fires.
+                checks.push({hit: false, reason: `${c.scope} ${c.feature} unavailable`});
+                continue;
+            }
+            const hit = c.op === "lt" ? v < c.value : v > c.value;
+            const label = c.scope === "market" ? c.feature : `avg ${c.feature}`;
+            checks.push({
+                hit,
+                reason: `${label} ${fmtFeatureVal(c.feature, v)} ${c.op} ${fmtFeatureVal(c.feature, c.value)}`,
+            });
+        }
     }
     if (!checks.length) return {fire: false, reason: "no triggers enabled"};
     const hits = checks.filter((c) => c.hit);

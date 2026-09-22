@@ -6,7 +6,14 @@
 // index's last-good weights and logs that live-gen is unavailable.
 import {spawn} from "node:child_process";
 import {INDICES} from "./indices.mjs";
-import {STRATEGIES, coerceRebalanceSpec, DEFAULT_MAX_STEP_MOVE_BPS} from "./strategies.mjs";
+import {
+    STRATEGIES,
+    coerceRebalanceSpec,
+    DEFAULT_MAX_STEP_MOVE_BPS,
+    PORTFOLIO_FEATURES,
+    MARKET_FEATURES,
+    FRACTION_FEATURES,
+} from "./strategies.mjs";
 import {candidatesForPrompt, assetIndex, selectableAssets} from "./catalog.mjs";
 
 const MODEL = "claude-haiku-4-5-20251001";
@@ -448,6 +455,9 @@ export const EXAMPLE_REBALANCE_PROMPTS = [
     "rebalance monthly, or immediately if any name exceeds its cap by 3%, or on an 8% drawdown",
     "trim on a 5% sector drift, and de-risk if we lag the field by 10%, never more than daily",
     "defensive: rebalance when the trend flips below the 20-point average or realized vol tops 2%, hourly cooldown",
+    "rebalance if the portfolio average dividend yield falls under 2%",
+    "de-risk when market volatility tops 25%",
+    "rebalance monthly, or if the portfolio average forward P/E rises above 30",
 ];
 
 // Safe default: hourly or 5% aggregate drift, at most once an hour.
@@ -466,6 +476,7 @@ function fallbackRebalance() {
             volBandPct: null,
             trendFlip: null,
             relativeLagPct: null,
+            featureConditions: null,
             combine: "any",
             maxStepMoveBps: DEFAULT_MAX_STEP_MOVE_BPS,
             note: "hourly or 5% aggregate drift, 1h cooldown",
@@ -495,6 +506,23 @@ function rebalanceSpecSchema() {
                     volBandPct: numOrNull,
                     trendFlip: numOrNull,
                     relativeLagPct: numOrNull,
+                    featureConditions: {
+                        type: ["array", "null"],
+                        items: {
+                            type: "object",
+                            properties: {
+                                feature: {
+                                    type: "string",
+                                    enum: [...PORTFOLIO_FEATURES, ...MARKET_FEATURES],
+                                },
+                                scope: {type: "string", enum: ["portfolio", "market"]},
+                                op: {type: "string", enum: ["lt", "gt"]},
+                                value: {type: "number"},
+                            },
+                            required: ["feature", "scope", "op", "value"],
+                            additionalProperties: false,
+                        },
+                    },
                     combine: {type: "string", enum: ["any", "all"]},
                     maxStepMoveBps: numOrNull,
                 },
@@ -502,7 +530,7 @@ function rebalanceSpecSchema() {
                     "intervalMs", "driftBps", "takeProfitPct", "cooldownMs",
                     "nameBreachBps", "sectorDriftBps", "drawdownPct",
                     "volBandPct", "trendFlip", "relativeLagPct",
-                    "combine", "maxStepMoveBps",
+                    "featureConditions", "combine", "maxStepMoveBps",
                 ],
                 additionalProperties: false,
             },
@@ -513,6 +541,11 @@ function rebalanceSpecSchema() {
 }
 
 function buildRebalancePrompt(prompt) {
+    const featUnit = (f) => (FRACTION_FEATURES.has(f) ? "fraction, 2% = 0.02" :
+        f === "market_cap_usd" ? "USD" :
+        ["pe_forward", "ev_ebitda", "net_debt_to_ebitda"].includes(f) ? "multiple" :
+        "AI score 0..5");
+    const portfolioFeats = PORTFOLIO_FEATURES.map((f) => `${f} (${featUnit(f)})`).join(", ");
     return (
         `You are turning a natural-language rebalance policy into a JSON ` +
         `trigger spec for an index vault.\n` +
@@ -538,6 +571,18 @@ function buildRebalancePrompt(prompt) {
         `value is the MA window in series points (default 20); uses NAV history\n` +
         `- relativeLagPct: rebalance when the index return lags the benchmark ` +
         `(the field-average return) by this FRACTION (10% = 0.1); uses history\n` +
+        `- featureConditions: array of {feature, scope, op, value} (or null) that ` +
+        `condition on fundamentals or the market. scope "portfolio" compares the ` +
+        `portfolio-weighted average of a frozen per-company feature; features: ` +
+        `${portfolioFeats}. scope "market" compares a broad-market (S&P 500 proxy) ` +
+        `signal; features: market_return (return over the tracked series, ` +
+        `fraction) and market_vol (realized stddev of recent returns, fraction). ` +
+        `op is "lt" or "gt"; value uses the feature's unit (fraction features: ` +
+        `"dividend yield under 2%" = {"feature":"dividend_yield",` +
+        `"scope":"portfolio","op":"lt","value":0.02}; multiples as-is: "P/E ` +
+        `above 30" = {"feature":"pe_forward","scope":"portfolio","op":"gt",` +
+        `"value":30}; "market volatility over 25%" = {"feature":"market_vol",` +
+        `"scope":"market","op":"gt","value":0.25})\n` +
         `- combine: "any" (default: any enabled trigger fires) or "all" (every ` +
         `enabled trigger must hold at once)\n` +
         `- maxStepMoveBps: refuse a rebalance if any asset price step exceeds ` +
@@ -547,7 +592,9 @@ function buildRebalancePrompt(prompt) {
         `{"name":"...","note":"...","spec":{"intervalMs":n|null,"driftBps":n|null,` +
         `"takeProfitPct":n|null,"cooldownMs":n|null,"nameBreachBps":n|null,` +
         `"sectorDriftBps":n|null,"drawdownPct":n|null,"volBandPct":n|null,` +
-        `"trendFlip":n|null,"relativeLagPct":n|null,"combine":"any|all",` +
+        `"trendFlip":n|null,"relativeLagPct":n|null,` +
+        `"featureConditions":[{"feature":"...","scope":"portfolio|market",` +
+        `"op":"lt|gt","value":n}]|null,"combine":"any|all",` +
         `"maxStepMoveBps":n|null}} where name is short and note restates the ` +
         `policy in one sentence.`
     );

@@ -50,18 +50,11 @@ export interface GeneratedRebalance {
 // Keep in sync with EXAMPLE_REBALANCE_PROMPTS in index/generate.mjs (the FE
 // cannot import the .mjs, so the chips are duplicated here).
 export const REBALANCE_PROMPT_TEMPLATES = [
-  "take profit at 10%, otherwise rebalance weekly, never more than once a day",
-  "rebalance only when the portfolio drifts 5% from target",
-  "monthly, but rebalance early if the portfolio gains 20%",
-  "daily rebalancing with a 2% drift band, at most twice a day",
-  "hands off: only rebalance on 10% aggregate drift, max once a week",
-  "aggressive: hourly, or 3% drift, take profit at 5%",
-  "rebalance monthly, or immediately if any name exceeds its cap by 3%, or on an 8% drawdown",
-  "trim on a 5% sector drift, and de-risk if we lag the field by 10%, never more than daily",
-  "defensive: rebalance when the trend flips below the 20-point average or realized vol tops 2%, hourly cooldown",
-  "rebalance if the portfolio average dividend yield falls under 2%",
-  "de-risk when market volatility tops 25%",
-  "rebalance monthly, or if the portfolio average forward P/E rises above 30",
+  "rebalance monthly, but early if the portfolio drifts 5% or any name breaches its cap by 3%, at most once a day",
+  "take profit at 10%, cut on an 8% drawdown, weekly otherwise, at most once a day",
+  "income guard: rebalance if the portfolio average dividend yield drops under 2% or a sector drifts 5%, weekly floor",
+  "value discipline: rebalance if average forward P/E rises above 30 or we lag the field by 10%, monthly, daily cap",
+  "defensive: de-risk when the trend flips below its 20-point average or market volatility spikes, hourly cooldown",
 ];
 
 const API = import.meta.env.VITE_API_URL as string | undefined;

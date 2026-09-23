@@ -76,10 +76,10 @@ export function PortfolioPage() {
 
   if (!realWallet)
     return (
-      <Alert color="yellow" title="Connect a wallet">
+      <Alert color="gray" variant="light" title="Connect a wallet">
         Connect an injected wallet on Coston2 to see your positions. Mint test USD
         and Invest into an index on the{" "}
-        <Text component={Link} to="/live" inherit c="blue">
+        <Text component={Link} to="/live" inherit td="underline">
           Live
         </Text>{" "}
         page first.
@@ -115,7 +115,7 @@ export function PortfolioPage() {
         <Meta label="Total value">{usd(totalValue)}</Meta>
         <Meta label="Invested">{totalCost > 0 ? usd(totalCost) : "-"}</Meta>
         <Meta label="P&L">
-          <Text component="span" c={totalPnl >= 0 ? "green" : "red"} fw={700}>
+          <Text component="span" c={totalPnl >= 0 ? "up.7" : "down.7"} fw={500}>
             {totalCost > 0 ? pct(totalPnl) : "-"}
           </Text>
         </Meta>
@@ -124,7 +124,7 @@ export function PortfolioPage() {
       {held.length === 0 ? (
         <Alert color="gray" variant="light">
           You have no positions yet. Go to{" "}
-          <Text component={Link} to="/live" inherit c="blue">
+          <Text component={Link} to="/live" inherit td="underline">
             Live
           </Text>
           , Mint test USD, then Invest into an index - it will show up here.
@@ -152,7 +152,7 @@ export function PortfolioPage() {
                       <Group gap={6}>
                         <Text fw={600}>{b.name}</Text>
                         {(b.owner === "you" || b.mine) && (
-                          <Badge size="xs" color="teal" variant="filled">
+                          <Badge size="xs" color="flare" variant="light">
                             Yours
                           </Badge>
                         )}
@@ -165,7 +165,7 @@ export function PortfolioPage() {
                       {usd(pos.valueUsd)}
                     </Table.Td>
                     <Table.Td style={{textAlign: "right"}}>
-                      <Text c={pnl >= 0 ? "green" : "red"} fw={700}>
+                      <Text c={pnl >= 0 ? "up.7" : "down.7"} fw={500}>
                         {pct(pnl)}
                       </Text>
                     </Table.Td>
@@ -190,7 +190,7 @@ export function PortfolioPage() {
                   <Text size="sm" c="dimmed">
                     NAV {b.nav != null ? usd(b.nav) : "-"}
                   </Text>
-                  <Text size="sm" c={(b.ret ?? 0) >= 0 ? "green" : "red"} fw={600}>
+                  <Text size="sm" c={(b.ret ?? 0) >= 0 ? "up.7" : "down.7"} fw={500}>
                     {b.ret != null ? pct(b.ret) : "-"}
                   </Text>
                 </Group>

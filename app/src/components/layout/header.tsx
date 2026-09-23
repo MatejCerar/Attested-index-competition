@@ -47,7 +47,7 @@ export function Header() {
 
       {connected ? (
         <Group gap="xs" wrap="nowrap">
-          <Badge color={mode === "injected" ? "green" : "gray"} variant="light">
+          <Badge color={mode === "injected" ? "up" : "gray"} variant="light">
             {mode === "injected" ? "Coston2" : "demo"}
           </Badge>
           <Button variant="default" size="sm" onClick={disconnect}>

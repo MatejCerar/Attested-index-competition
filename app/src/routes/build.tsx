@@ -222,7 +222,7 @@ export function BuildPage() {
     try {
       const res = await mintTestUsd({provider, stable, mode, amountUsdc: 1000});
       notifications.show({
-        color: res.ok ? "green" : "red",
+        color: res.ok ? "up" : "down",
         title: res.ok ? "Minted 1000 test USD" : "Mint failed",
         message: res.ok
           ? res.mocked
@@ -246,7 +246,7 @@ export function BuildPage() {
       setThesis(g.rationale || genPrompt.trim());
       setStrategy(g.strategy);
       notifications.show({
-        color: "green",
+        color: "up",
         message: `Config pre-filled from prompt (${g.source}). Tweak, then add to competition.`,
       });
     } finally {
@@ -261,7 +261,7 @@ export function BuildPage() {
       const g = await generateRebalanceStrategy(rebPrompt.trim());
       setReb(g);
       notifications.show({
-        color: g.source === "live" ? "green" : "red",
+        color: g.source === "live" ? "up" : "gray",
         title:
           g.source === "live"
             ? "Rebalance rule generated"
@@ -314,7 +314,7 @@ export function BuildPage() {
       const added = await addBasket(basket);
       if (!added.ok) {
         notifications.show({
-          color: "red",
+          color: "down",
           title: "Not added to the competition",
           message:
             "Could not reach the competition server - is `npm run compete` running? " +
@@ -329,7 +329,7 @@ export function BuildPage() {
       setBuilt((b) => [...b, basket]);
       await queryClient.invalidateQueries({queryKey: ["leaderboard"]});
       notifications.show({
-        color: "green",
+        color: "up",
         title: "Added to the competition",
         message:
           `"${basket.name}" is in the competition (${added.mode}). ` +
@@ -354,7 +354,7 @@ export function BuildPage() {
         });
         if (res.ok && !res.mocked) recordDeposit(vaultAddr, depositAmt);
         notifications.show({
-          color: res.ok ? "green" : "red",
+          color: res.ok ? "up" : "down",
           title: res.ok
             ? `Deposited $${depositAmt.toLocaleString()} into your index vault`
             : "Deposit failed",
@@ -476,14 +476,14 @@ export function BuildPage() {
                         onChange={(v) => setWeight(f.name, Number(v.toFixed(3)))}
                         label={(v) => `${v > 0 ? "+" : ""}${v.toFixed(3)}`}
                         marks={[{value: 0}]}
-                        color={w < 0 ? "red" : "green"}
+                        color={w < 0 ? "down" : "up"}
                       />
                       <Text
                         size="sm"
                         fw={700}
                         w={56}
                         ta="right"
-                        c={w < 0 ? "red" : w > 0 ? "green" : "dimmed"}
+                        c={w < 0 ? "down.7" : w > 0 ? "up.7" : "dimmed"}
                         style={{flexShrink: 0, fontVariantNumeric: "tabular-nums"}}
                       >
                         {w > 0 ? "+" : ""}
@@ -697,7 +697,7 @@ export function BuildPage() {
             </Group>
             {reb && (
               <Alert
-                color={reb.source === "live" ? "green" : "yellow"}
+                color={reb.source === "live" ? "up" : "gray"}
                 variant="light"
                 mb="sm"
                 title={reb.name}
@@ -707,7 +707,7 @@ export function BuildPage() {
                   {specReadout(reb.spec)}
                 </Text>
                 {reb.source === "fallback" && (
-                  <Text size="note" c="red" mt={4}>
+                  <Text size="note" c="dimmed" mt={4}>
                     Live generation was unavailable; this is the safe default
                     rule, not your prompt. Clear it to use the picker instead.
                   </Text>
@@ -722,7 +722,7 @@ export function BuildPage() {
               </Text>
               <Group gap={6}>
                 {previewBusy && <Loader size={14} />}
-                <Badge size="xs" variant="light" color="blue">
+                <Badge size="xs" variant="light" color="gray">
                   built on server
                 </Badge>
               </Group>
@@ -733,7 +733,7 @@ export function BuildPage() {
             </Text>
 
             {previewError ? (
-              <Alert color="yellow" variant="light" mb="sm">
+              <Alert color="gray" variant="light" mb="sm">
                 {previewError}
               </Alert>
             ) : legs.length === 0 ? (
@@ -749,12 +749,12 @@ export function BuildPage() {
                         {l.ticker}
                       </Text>
                       {l.sector && (
-                        <Badge size="xs" variant="light" color="grape">
+                        <Badge size="xs" variant="light" color="gray">
                           {titleCase(l.sector)}
                         </Badge>
                       )}
                       {!l.catalogId && (
-                        <Badge size="xs" variant="light" color="yellow">
+                        <Badge size="xs" variant="light" color="gray">
                           not in catalog
                         </Badge>
                       )}
@@ -776,7 +776,7 @@ export function BuildPage() {
 
             <Group justify="space-between" mb="sm">
               <Text fw={600}>Total weight</Text>
-              <Text fw={700} c={submitLegs.length > 0 ? "green" : "red"}>
+              <Text fw={700} c={submitLegs.length > 0 ? "up.7" : "down.7"}>
                 {submitLegs.reduce((a, l) => a + l.pct, 0)}%
               </Text>
             </Group>
@@ -829,8 +829,8 @@ export function BuildPage() {
           </Card>
 
           {built.length > 0 && (
-            <Card withBorder radius="md" mt="md" style={{borderColor: "var(--mantine-color-green-6)"}}>
-              <Alert color="green" variant="light" mb="sm" title="In the competition">
+            <Card withBorder radius="md" mt="md" style={{borderColor: "var(--mantine-color-up-6)"}}>
+              <Alert color="up" variant="light" mb="sm" title="In the competition">
                 {`"${built[built.length - 1].name}" was added and joins the live board on the
                 next engine tick (about 15s). It is being scored with the real rebalance math
                 right now.`}
@@ -845,7 +845,7 @@ export function BuildPage() {
                       <Group gap={6}>
                         <Text fw={600}>{b.name}</Text>
                         {b.config && (
-                          <Badge size="xs" variant="light" color="blue">
+                          <Badge size="xs" variant="light" color="gray">
                             config v{b.config.configVersion}
                           </Badge>
                         )}
@@ -860,7 +860,7 @@ export function BuildPage() {
                     <Button
                       size="compact-xs"
                       variant="subtle"
-                      color="red"
+                      color="gray"
                       onClick={() => setBuilt((x) => x.filter((_, j) => j !== i))}
                     >
                       remove
@@ -876,7 +876,7 @@ export function BuildPage() {
                 tee-node signs the rebalance on Coston2.
               </Alert>
               <Group mt="sm" gap="sm">
-                <Button component={Link} to="/live" color="green" size="sm">
+                <Button component={Link} to="/live" size="sm">
                   Watch it live
                 </Button>
                 <Button component={Link} to="/leaderboard" variant="light" size="sm">

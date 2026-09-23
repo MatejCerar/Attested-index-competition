@@ -1,6 +1,50 @@
-import { createTheme } from "@mantine/core";
+import { createTheme, type MantineColorsTuple } from "@mantine/core";
+
+// Strict 3-color palette: gray (Mantine default) for everything neutral,
+// flare pink for brand, muted up/down greens and reds for returns only.
+const flare: MantineColorsTuple = [
+  "#ffe9ef",
+  "#ffd3de",
+  "#f9a7bb",
+  "#f37897",
+  "#ee5078",
+  "#eb3765",
+  "#e62058",
+  "#cd134b",
+  "#b80a42",
+  "#a20038"
+];
+
+const up: MantineColorsTuple = [
+  "#eaf3ed",
+  "#dbe8df",
+  "#b8d0c0",
+  "#92b89f",
+  "#72a383",
+  "#578c67",
+  "#3d7a4f",
+  "#326a43",
+  "#285c39",
+  "#1b4d2d"
+];
+
+const down: MantineColorsTuple = [
+  "#faeeed",
+  "#f2dcda",
+  "#e5b8b4",
+  "#d8938c",
+  "#cd746c",
+  "#c65f56",
+  "#b0504a",
+  "#9c443e",
+  "#8c3b35",
+  "#7c312c"
+];
 
 export const theme = createTheme({
+  colors: {flare, up, down},
+  primaryColor: "flare",
+  primaryShade: 6,
   fontFamily: "Satoshi-Variable, sans-serif",
   headings: {
     fontFamily: "Satoshi-Variable, sans-serif",

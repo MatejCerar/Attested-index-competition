@@ -23,13 +23,13 @@ export function ConnectWalletModal({
     try {
       await connect(target);
       notifications.show({
-        color: "green",
+        color: "up",
         message: target.kind === "mock" ? "Demo account connected (mock)" : `${label} connected`,
       });
       onClose();
     } catch (e) {
       notifications.show({
-        color: "red",
+        color: "down",
         title: "Connect failed",
         message: String((e as Error)?.message ?? e),
       });

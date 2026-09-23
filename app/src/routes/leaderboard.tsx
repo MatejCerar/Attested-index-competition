@@ -35,7 +35,7 @@ export function LeaderboardPage() {
   // start / after a wipe); show a warming-up state instead of a broken page.
   if (error || !data || !data.indices?.length)
     return (
-      <Alert color="yellow">
+      <Alert color="gray" variant="light">
         Warming up - standings appear within a few seconds of the engine
         starting.
       </Alert>
@@ -64,7 +64,7 @@ export function LeaderboardPage() {
             <Text size="note" c="dimmed">
               Platform fees this run ({data.feeBps / 100}% per deposit)
             </Text>
-            <Text fw={800} size="xl" c="green">
+            <Text fw={800} size="xl" c="up.7">
               {usd(data.platformRevenueUsd)} mUSDC
             </Text>
           </div>
@@ -79,7 +79,7 @@ export function LeaderboardPage() {
               example on-chain rebalance tx
             </Anchor>
             {data.sample && (
-              <Badge color="yellow" variant="light">
+              <Badge color="gray" variant="light">
                 sample data
               </Badge>
             )}
@@ -136,7 +136,7 @@ function Row({idx}: {idx: LeaderboardIndex}) {
         <Group gap={6}>
           <Text fw={600}>{idx.name}</Text>
           {idx.owner === "you" && (
-            <Badge size="xs" variant="filled" color="teal">
+            <Badge size="xs" variant="light" color="flare">
               Yours
             </Badge>
           )}
@@ -156,13 +156,13 @@ function Row({idx}: {idx: LeaderboardIndex}) {
         </Group>
       </Table.Td>
       <Table.Td>
-        <Badge variant="light" color="blue">
+        <Badge variant="light" color="gray">
           {idx.strategyName ?? idx.strategy}
         </Badge>
       </Table.Td>
       <Table.Td style={{textAlign: "right"}}>{usd(nav)}</Table.Td>
       <Table.Td style={{textAlign: "right"}}>
-        <Text fw={700} c={idx.weekReturn >= 0 ? "green" : "red"}>
+        <Text fw={500} c={idx.weekReturn >= 0 ? "up.7" : "down.7"}>
           {pct(idx.weekReturn)}
         </Text>
       </Table.Td>

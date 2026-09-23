@@ -173,7 +173,7 @@ export function UniversePage() {
                           </Text>
                         </Table.Td>
                         <Table.Td>
-                          <Badge size="xs" variant="light" color="grape">
+                          <Badge size="xs" variant="light" color="gray">
                             {titleCase(a.assetClass)}
                           </Badge>
                         </Table.Td>
@@ -187,7 +187,7 @@ export function UniversePage() {
                             <Button
                               size="compact-xs"
                               variant="subtle"
-                              color="red"
+                              color="gray"
                               onClick={() => basket.remove(a.id)}
                             >
                               Remove
@@ -267,7 +267,7 @@ function BasketPanel({universe}: {universe: CatalogAsset[]}) {
       const added = await addBasket(b);
       if (!added.ok) {
         notifications.show({
-          color: "red",
+          color: "down",
           title: "Not added to the competition",
           message:
             "Could not reach the competition server - is `npm run compete` running? " +
@@ -278,7 +278,7 @@ function BasketPanel({universe}: {universe: CatalogAsset[]}) {
       }
       await queryClient.invalidateQueries({queryKey: ["leaderboard"]});
       notifications.show({
-        color: "green",
+        color: "up",
         title: "Added to the competition",
         message:
           `"${b.name}" is in the competition (${added.mode}). ` +
@@ -299,7 +299,7 @@ function BasketPanel({universe}: {universe: CatalogAsset[]}) {
       <Group justify="space-between" mb="xs">
         <Text fw={600}>Your basket ({basket.items.length})</Text>
         {basket.items.length > 0 && (
-          <Button size="compact-xs" variant="subtle" color="red" onClick={basket.clear}>
+          <Button size="compact-xs" variant="subtle" color="gray" onClick={basket.clear}>
             clear
           </Button>
         )}
@@ -354,7 +354,7 @@ function BasketPanel({universe}: {universe: CatalogAsset[]}) {
         >
           Equal weight
         </Button>
-        <Text fw={700} c={sum > 0 ? "green" : "red"} style={{fontVariantNumeric: "tabular-nums"}}>
+        <Text fw={700} c={sum > 0 ? "up.7" : "down.7"} style={{fontVariantNumeric: "tabular-nums"}}>
           {sum}%
         </Text>
       </Group>
@@ -402,10 +402,10 @@ function BasketPanel({universe}: {universe: CatalogAsset[]}) {
       )}
 
       {lastAdded && (
-        <Alert color="green" variant="light" mt="sm" title="In the competition">
+        <Alert color="up" variant="light" mt="sm" title="In the competition">
           {`"${lastAdded}" was added and joins the live board on the next engine tick.`}
           <Group mt="sm" gap="sm">
-            <Button component={Link} to="/live" color="green" size="compact-sm">
+            <Button component={Link} to="/live" size="compact-sm">
               Watch it live
             </Button>
             <Button component={Link} to="/leaderboard" variant="light" size="compact-sm">

@@ -25,7 +25,7 @@ export function ProvenanceBadge({p}: {p: IndexProvenance}) {
   if (!has) return null;
 
   const quorum = (p.attestedByCount ?? 0) >= 2;
-  const color = p.attestedByCount != null ? (quorum ? "green" : "yellow") : "gray";
+  const color = p.attestedByCount != null && quorum ? "up" : "gray";
   const label =
     p.attestedByCount != null
       ? `attested x${p.attestedByCount}`
@@ -52,7 +52,7 @@ export function ProvenanceBadge({p}: {p: IndexProvenance}) {
             <Line k="Attestation">
               {p.epochId != null ? `epoch ${p.epochId}` : "epoch -"}
               {p.attestedByCount != null && (
-                <Text component="span" c={quorum ? "green" : "yellow"} fw={600}>
+                <Text component="span" c={quorum ? "up.7" : "dimmed"} fw={600}>
                   {" "}
                   attested by {p.attestedByCount} enclave{p.attestedByCount === 1 ? "" : "s"}
                 </Text>

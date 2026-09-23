@@ -45,8 +45,12 @@ const usd = (x?: number | null) =>
 const EXP = "https://coston2-explorer.flare.network";
 const short = (h?: string | null) => (h ? `${h.slice(0, 10)}...` : "");
 const isZero = (h?: string | null) => !h || /^0x0+$/.test(h);
-// Distinct line colours, one per index by rank order.
-const LINE_COLORS = ["#e62058", "#f5a623", "#22b8cf", "#7048e8", "#20c997", "#adb5bd"];
+// Monochrome chart palette: the top-ranked index gets the brand pink, every
+// other line steps through graduated grays.
+const BRAND_LINE = "#e62058";
+const GRAY_LINES = ["#495057", "#6c757d", "#868e96", "#adb5bd", "#ced4da"];
+const lineColor = (i: number) =>
+  i === 0 ? BRAND_LINE : GRAY_LINES[(i - 1) % GRAY_LINES.length];
 
 // What each row needs to offer a real on-chain deposit into that index's vault.
 interface InvestCtx {
@@ -81,7 +85,7 @@ export function LivePage() {
     try {
       const res = await mintTestUsd({provider, stable, mode, amountUsdc: 1000});
       notifications.show({
-        color: res.ok ? "green" : "red",
+        color: res.ok ? "up" : "down",
         title: res.ok ? "Minted 1000 test USD" : "Mint failed",
         message: res.ok
           ? res.mocked
@@ -99,7 +103,7 @@ export function LivePage() {
   // live.json has not been written yet (fresh start / after a wipe).
   if (error || !data || !data.startedAt)
     return (
-      <Alert color="yellow">
+      <Alert color="gray" variant="light">
         Warming up - the live board appears within a few seconds of the engine
         starting. If it persists, make sure <code>npm run compete</code> (or{" "}
         <code>node scripts/live-engine.mjs</code>) is running; it writes
@@ -120,11 +124,11 @@ export function LivePage() {
         <div>
           <Group gap="xs">
             <Title order={1}>Live competition</Title>
-            <Badge color={data.finished ? "yellow" : "green"} variant="light">
+            <Badge color={data.finished ? "gray" : "flare"} variant="light">
               {data.finished ? "FINAL" : "LIVE"}
             </Badge>
             {data.source === "onchain" && (
-              <Badge color="grape" variant="light">
+              <Badge color="gray" variant="light">
                 on-chain
               </Badge>
             )}
@@ -146,7 +150,7 @@ export function LivePage() {
         </div>
       </Group>
 
-      {!continuous && <Progress value={progress} color="green" />}
+      {!continuous && <Progress value={progress} />}
 
       <Group gap="xl">
         <Meta label="Elapsed">
@@ -221,7 +225,10 @@ export function LivePage() {
 // Per-index return-since-t0 lines over time (recharts). Merges each index's NAV
 // series into one time-indexed dataset keyed by index id.
 function NavChart({data}: {data: LiveData}) {
-  const series = data.indices.filter((b) => b.series && b.series.length > 1);
+  // Sorted by rank so index 0 (the leader) gets the single brand-colored line.
+  const series = data.indices
+    .filter((b) => b.series && b.series.length > 1)
+    .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
   if (!series.length)
     return (
       <Card withBorder radius="md">
@@ -275,9 +282,10 @@ function NavChart({data}: {data: LiveData}) {
                 type="monotone"
                 dataKey={b.id}
                 name={b.name}
-                stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                stroke={lineColor(i)}
                 dot={false}
-                strokeWidth={2}
+                strokeWidth={i === 0 ? 2 : 1.5}
+                strokeOpacity={i === 0 ? 1 : 0.85}
                 isAnimationActive={false}
                 connectNulls
               />
@@ -288,7 +296,7 @@ function NavChart({data}: {data: LiveData}) {
       <Group gap="md" mt="xs">
         {series.map((b, i) => (
           <Group key={b.id} gap={4}>
-            <div style={{width: 12, height: 3, background: LINE_COLORS[i % LINE_COLORS.length]}} />
+            <div style={{width: 12, height: 3, background: lineColor(i)}} />
             <Text size="note" c="dimmed">
               {b.name}
             </Text>
@@ -343,7 +351,7 @@ function VaultActions({vault, invest}: {vault: string; invest: InvestCtx}) {
         mode: invest.mode,
       });
       notifications.show({
-        color: res.ok ? "green" : "red",
+        color: res.ok ? "up" : "down",
         title: res.ok ? "Deposited into the index vault" : "Deposit failed",
         message: res.ok
           ? res.mocked
@@ -365,7 +373,7 @@ function VaultActions({vault, invest}: {vault: string; invest: InvestCtx}) {
     try {
       const res = await redeemOnChain({provider: invest.provider, vault, mode: invest.mode});
       notifications.show({
-        color: res.ok ? "green" : "red",
+        color: res.ok ? "up" : "down",
         title: res.ok ? "Redeemed your shares" : "Redeem failed",
         message: res.ok
           ? res.mocked
@@ -386,7 +394,6 @@ function VaultActions({vault, invest}: {vault: string; invest: InvestCtx}) {
     <Button
       size="compact-sm"
       variant="light"
-      color="green"
       loading={busy === "invest"}
       disabled={invest.realWallet && !invest.stable}
       onClick={runInvest}
@@ -406,13 +413,13 @@ function VaultActions({vault, invest}: {vault: string; invest: InvestCtx}) {
       )}
       {hasPos && (
         <>
-          <Text size="note" c="teal" fw={600}>
+          <Text size="note" c="dimmed" fw={600}>
             Your position: {usd(pos!.valueUsd)}
           </Text>
           <Button
             size="compact-sm"
             variant="subtle"
-            color="red"
+            color="gray"
             loading={busy === "redeem"}
             onClick={runRedeem}
           >
@@ -453,19 +460,19 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
   }
   const mine = b.owner === "you" || b.mine === true;
   return (
-    <Table.Tr style={mine ? {background: "var(--mantine-color-teal-light)"} : undefined}>
+    <Table.Tr style={mine ? {background: "var(--mantine-color-flare-light)"} : undefined}>
       <Table.Td>
         <Group gap={4} wrap="nowrap">
           <Text fw={700} size="lg">
             {b.rank}
           </Text>
           {move > 0 && (
-            <Text component="span" c="green" size="sm">
+            <Text component="span" c="up.6" size="sm">
               &#9650;
             </Text>
           )}
           {move < 0 && (
-            <Text component="span" c="red" size="sm">
+            <Text component="span" c="down.6" size="sm">
               &#9660;
             </Text>
           )}
@@ -475,11 +482,11 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
         <Group gap={6}>
           <Text fw={600}>{b.name}</Text>
           {mine && (
-            <Badge size="xs" variant="filled" color="teal">
+            <Badge size="xs" variant="light" color="flare">
               Yours
             </Badge>
           )}
-          <Badge size="xs" variant="light" color="grape">
+          <Badge size="xs" variant="light" color="gray">
             RWA
           </Badge>
           {b.strategyName && (
@@ -488,7 +495,7 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
             </Badge>
           )}
           {b.coverage < 1 && (
-            <Badge size="xs" variant="light" color="yellow">
+            <Badge size="xs" variant="light" color="gray">
               {Math.round(b.coverage * 100)}% on venue
             </Badge>
           )}
@@ -523,7 +530,7 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
             >
               {l.sym} {l.weight}%
               {!l.dead && l.chg != null && (
-                <Text component="span" c={l.chg >= 0 ? "green" : "red"} ml={4}>
+                <Text component="span" c={l.chg >= 0 ? "up.7" : "down.7"} ml={4}>
                   {pct(l.chg)}
                 </Text>
               )}
@@ -545,7 +552,7 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
         )}
       </Table.Td>
       <Table.Td style={{textAlign: "right"}}>
-        <Text fw={700} c={(b.ret ?? 0) >= 0 ? "green" : "red"}>
+        <Text fw={500} c={(b.ret ?? 0) >= 0 ? "up.7" : "down.7"}>
           {b.ret != null ? pct(b.ret) : "-"}
         </Text>
       </Table.Td>

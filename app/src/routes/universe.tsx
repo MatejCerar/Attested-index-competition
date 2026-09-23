@@ -34,6 +34,7 @@ import {
 } from "@/core/strategies.ts";
 import type {CatalogAsset, UserBasket} from "@/core/types.ts";
 import {useCatalog} from "@/core/use-data.ts";
+import {useWallet} from "@/core/wallet-context.tsx";
 
 // Cap on rendered rows so the ~1,300-asset table stays snappy. Never silent:
 // the "showing N of M" line always says when the list is truncated.
@@ -230,6 +231,7 @@ export function UniversePage() {
 // and prompt builders use.
 function BasketPanel({universe}: {universe: CatalogAsset[]}) {
   const basket = useBasket();
+  const {address} = useWallet();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [thesis, setThesis] = useState("");
@@ -264,7 +266,7 @@ function BasketPanel({universe}: {universe: CatalogAsset[]}) {
     try {
       // Same rule as Build: only a successful server response counts as added.
       // If the competition server is unreachable, fail loudly, add nothing.
-      const added = await addBasket(b);
+      const added = await addBasket(b, address);
       if (!added.ok) {
         notifications.show({
           color: "down",

@@ -17,6 +17,7 @@ import {readVaultPosition, type VaultPosition} from "@/core/evm-seam.ts";
 import {useLive} from "@/core/use-data.ts";
 import {useOnchain} from "@/core/use-onchain.ts";
 import {useWallet} from "@/core/wallet-context.tsx";
+import {isMyIndex} from "@/core/ownership.ts";
 
 const usd = (x?: number | null) =>
   x == null ? "-" : `$${x.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
@@ -93,7 +94,7 @@ export function PortfolioPage() {
     0
   );
   const totalPnl = totalCost > 0 ? totalValue / totalCost - 1 : 0;
-  const myIndices = indices.filter((b) => b.owner === "you" || b.mine);
+  const myIndices = indices.filter((b) => isMyIndex(b.id, address));
 
   return (
     <Stack gap="lg">
@@ -151,7 +152,7 @@ export function PortfolioPage() {
                     <Table.Td>
                       <Group gap={6}>
                         <Text fw={600}>{b.name}</Text>
-                        {(b.owner === "you" || b.mine) && (
+                        {isMyIndex(b.id, address) && (
                           <Badge size="xs" color="flare" variant="light">
                             Yours
                           </Badge>

@@ -169,8 +169,8 @@ export interface UserBasket {
   prompt: string;
   rationale?: string;
   kind: "rwa";
-  strategy: string;
+  strategy: string; // named-strategy id, or the active rule's human label
   weights: Record<string, number>;
   config?: BasketConfig; // present when built from the config editor
-  rebalanceSpec?: RebalanceSpec; // prompt-generated rule, overrides strategy
+  rebalanceSpec?: RebalanceSpec; // the active rule the engine evaluates; overrides strategy
 }

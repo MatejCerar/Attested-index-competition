@@ -10,7 +10,6 @@ import {
   MultiSelect,
   NumberInput,
   SegmentedControl,
-  Select,
   Slider,
   Stack,
   Text,
@@ -36,19 +35,14 @@ import {
 import {recordDeposit} from "@/core/cost-basis.ts";
 import {generateIndex} from "@/core/generate.ts";
 import {
+  DEFAULT_REBALANCE_PRESET,
   FRACTION_FEATURES,
+  REBALANCE_PRESETS,
   REBALANCE_PROMPT_TEMPLATES,
   generateRebalanceStrategy,
   type FeatureCondition,
-  type GeneratedRebalance,
   type RebalanceSpec,
 } from "@/core/rebalance.ts";
-import {
-  DEFAULT_STRATEGY,
-  STRATEGY_SELECT_DATA,
-  STRATEGY_TEMPLATES,
-  strategyName,
-} from "@/core/strategies.ts";
 import type {BasketConfig, CatalogAsset, UserBasket} from "@/core/types.ts";
 import {depositOnChain, mintTestUsd} from "@/core/evm-seam.ts";
 import {useCatalog} from "@/core/use-data.ts";
@@ -104,6 +98,22 @@ const PROMPT_TEMPLATES = [
   "High-dividend blue chips",
 ];
 
+// The one active rebalance rule: always a valid spec, shown in the readout and
+// submitted with the basket. origin drives the small source label.
+interface ActiveRule {
+  label: string;
+  spec: RebalanceSpec;
+  origin: "default" | "preset" | "prompt";
+  note?: string;
+  fallback?: boolean;
+}
+
+const DEFAULT_RULE: ActiveRule = {
+  label: DEFAULT_REBALANCE_PRESET.label,
+  spec: DEFAULT_REBALANCE_PRESET.spec,
+  origin: "default",
+};
+
 const SECTOR_OPTIONS = GICS_SECTORS.map((s) => ({value: s, label: titleCase(s)}));
 const POSITION_OPTIONS = COMPETITIVE_POSITIONS.map((p) => ({value: p, label: titleCase(p)}));
 const FEATURE_GROUPS = ["Value", "Yield", "Growth", "Quality", "Momentum", "AI-scored"];
@@ -131,7 +141,7 @@ function mapTicker(t: string, byTicker: Map<string, CatalogAsset>): string | nul
 export function BuildPage() {
   const {data: catalog, isLoading} = useCatalog();
   const {data: onchain} = useOnchain();
-  const {connected, mode, provider} = useWallet();
+  const {connected, mode, provider, address} = useWallet();
   const queryClient = useQueryClient();
   const [minting, setMinting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -150,15 +160,14 @@ export function BuildPage() {
 
   const [name, setName] = useState("");
   const [thesis, setThesis] = useState("");
-  const [strategy, setStrategy] = useState<string>(DEFAULT_STRATEGY);
   const [built, setBuilt] = useState<UserBasket[]>([]);
   const [genPrompt, setGenPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
-  // Prompt 2: the natural-language rebalance rule. When set, it overrides the
-  // named strategy picker on submit.
+  // The unified rebalance rule: starts as the default preset, replaced by a
+  // preset chip (instant) or a generated prompt rule. Always valid.
+  const [rule, setRule] = useState<ActiveRule>(DEFAULT_RULE);
   const [rebPrompt, setRebPrompt] = useState("");
   const [rebGenerating, setRebGenerating] = useState(false);
-  const [reb, setReb] = useState<GeneratedRebalance | null>(null);
 
   const allAssets = useMemo<CatalogAsset[]>(() => {
     if (!catalog) return [];
@@ -244,7 +253,6 @@ export function BuildPage() {
       setCfg(g.config);
       setName(g.name);
       setThesis(g.rationale || genPrompt.trim());
-      setStrategy(g.strategy);
       notifications.show({
         color: "up",
         message: `Config pre-filled from prompt (${g.source}). Tweak, then add to competition.`,
@@ -259,7 +267,13 @@ export function BuildPage() {
     setRebGenerating(true);
     try {
       const g = await generateRebalanceStrategy(rebPrompt.trim());
-      setReb(g);
+      setRule({
+        label: g.name,
+        spec: g.spec,
+        origin: "prompt",
+        note: g.note,
+        fallback: g.source === "fallback",
+      });
       notifications.show({
         color: g.source === "live" ? "up" : "gray",
         title:
@@ -298,10 +312,10 @@ export function BuildPage() {
       name: name.trim(),
       prompt: thesis.trim() || name.trim(),
       kind: "rwa",
-      strategy,
+      strategy: rule.label,
       weights,
       config: basketConfig,
-      ...(reb ? {rebalanceSpec: reb.spec} : {}),
+      rebalanceSpec: rule.spec,
     };
 
     setSubmitting(true);
@@ -311,7 +325,7 @@ export function BuildPage() {
       // engine races it), and ranks it on the leaderboard. If the server is
       // unreachable the submission never reaches the competition, so we FAIL
       // LOUDLY and do NOT present it as added.
-      const added = await addBasket(basket);
+      const added = await addBasket(basket, address);
       if (!added.ok) {
         notifications.show({
           color: "down",
@@ -369,8 +383,7 @@ export function BuildPage() {
 
       setName("");
       setThesis("");
-      setStrategy(DEFAULT_STRATEGY);
-      setReb(null);
+      setRule(DEFAULT_RULE);
       setRebPrompt("");
     } finally {
       setSubmitting(false);
@@ -633,28 +646,34 @@ export function BuildPage() {
               minRows={2}
               mb="xs"
             />
-            <Select
-              label="Rebalance strategy"
-              data={STRATEGY_SELECT_DATA}
-              value={strategy}
-              onChange={(v) => setStrategy(v ?? DEFAULT_STRATEGY)}
-              searchable
-              disabled={reb != null}
-              mb={4}
-            />
-            <Text size="note" c="dimmed" mb="sm">
-              {reb
-                ? "Overridden by the generated rebalance rule below. Clear it to use the picker."
-                : (STRATEGY_TEMPLATES.find((s) => s.id === strategy)?.description ??
-                  strategyName(strategy))}
-            </Text>
-
             <Text fw={600} size="sm" mb={4}>
-              How should it rebalance? (optional)
+              Rebalance rule
             </Text>
             <Text size="note" c="dimmed" mb="xs">
-              Describe the rebalance policy in plain language. A generated rule
-              overrides the strategy picker above.
+              Pick a preset, or describe your own policy below. The active rule
+              is what the live engine evaluates each tick.
+            </Text>
+            <Group gap={6} mb="sm">
+              {REBALANCE_PRESETS.map((p) => {
+                const active = rule.origin !== "prompt" && rule.label === p.label;
+                return (
+                  <Badge
+                    key={p.label}
+                    variant={active ? "filled" : "light"}
+                    color={active ? "flare" : "gray"}
+                    style={{cursor: "pointer"}}
+                    onClick={() =>
+                      setRule({label: p.label, spec: p.spec, origin: "preset"})
+                    }
+                  >
+                    {p.label}
+                  </Badge>
+                );
+              })}
+            </Group>
+
+            <Text size="note" c="dimmed" mb={4}>
+              or describe your own
             </Text>
             <Textarea
               placeholder="e.g. take profit at 10%, otherwise rebalance weekly, never more than once a day"
@@ -689,31 +708,32 @@ export function BuildPage() {
               >
                 Generate rebalance rule
               </Button>
-              {reb && (
-                <Button size="compact-sm" variant="default" onClick={() => setReb(null)}>
-                  Clear (use picker)
-                </Button>
-              )}
             </Group>
-            {reb && (
-              <Alert
-                color={reb.source === "live" ? "up" : "gray"}
-                variant="light"
-                mb="sm"
-                title={reb.name}
-              >
-                <Text size="sm">{reb.note}</Text>
-                <Text size="note" c="dimmed" mt={4} style={{fontVariantNumeric: "tabular-nums"}}>
-                  {specReadout(reb.spec)}
+
+            <Alert
+              color={rule.origin === "prompt" && !rule.fallback ? "up" : "gray"}
+              variant="light"
+              mb="sm"
+              title="Active rebalance rule"
+            >
+              <Badge size="xs" variant="light" color="gray" mb={4}>
+                {rule.origin === "preset"
+                  ? `preset: ${rule.label}`
+                  : rule.origin === "prompt"
+                    ? `from your prompt: ${rule.label}`
+                    : "default"}
+              </Badge>
+              {rule.note && <Text size="sm">{rule.note}</Text>}
+              <Text size="note" c="dimmed" mt={4} style={{fontVariantNumeric: "tabular-nums"}}>
+                {specReadout(rule.spec)}
+              </Text>
+              {rule.fallback && (
+                <Text size="note" c="dimmed" mt={4}>
+                  Live generation was unavailable; this is the safe default
+                  rule, not your prompt. Pick a preset or generate again.
                 </Text>
-                {reb.source === "fallback" && (
-                  <Text size="note" c="dimmed" mt={4}>
-                    Live generation was unavailable; this is the safe default
-                    rule, not your prompt. Clear it to use the picker instead.
-                  </Text>
-                )}
-              </Alert>
-            )}
+              )}
+            </Alert>
             <Divider mb="sm" />
 
             <Group justify="space-between" mb={4}>
@@ -854,7 +874,7 @@ export function BuildPage() {
                         {Object.entries(b.weights)
                           .map(([id, w]) => `${byId.get(id)?.ticker ?? id} ${w}%`)
                           .join(", ")}{" "}
-                        - {b.rebalanceSpec ? "custom rebalance rule" : b.strategy}
+                        - {b.strategy}
                       </Text>
                     </div>
                     <Button

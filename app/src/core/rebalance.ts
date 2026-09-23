@@ -149,6 +149,55 @@ function sanitizeSpec(raw: unknown): RebalanceSpec | null {
   };
 }
 
+// Instant client-side presets for the unified "Rebalance rule" control: plain
+// spec objects, no server call. Each is run through sanitizeSpec so it is
+// exactly as valid as a server-generated rule; the first preset is the default.
+export interface RebalancePreset {
+  label: string;
+  spec: RebalanceSpec;
+}
+
+const preset = (label: string, raw: Record<string, unknown>): RebalancePreset => ({
+  label,
+  spec: sanitizeSpec(raw) ?? fallback().spec,
+});
+
+export const REBALANCE_PRESETS: RebalancePreset[] = [
+  preset("Hourly or 5% drift", {
+    intervalMs: 3600000,
+    driftBps: 500,
+    cooldownMs: 3600000,
+    combine: "any",
+    maxStepMoveBps: 2500,
+  }),
+  preset("Daily", {
+    intervalMs: 86400000,
+    cooldownMs: 86400000,
+    combine: "any",
+    maxStepMoveBps: 2500,
+  }),
+  preset("Weekly", {
+    intervalMs: 604800000,
+    cooldownMs: 86400000,
+    combine: "any",
+    maxStepMoveBps: 2500,
+  }),
+  preset("Monthly", {
+    intervalMs: 2592000000,
+    cooldownMs: 604800000,
+    combine: "any",
+    maxStepMoveBps: 2500,
+  }),
+  preset("5% drift only", {
+    driftBps: 500,
+    cooldownMs: 3600000,
+    combine: "any",
+    maxStepMoveBps: 2500,
+  }),
+];
+
+export const DEFAULT_REBALANCE_PRESET = REBALANCE_PRESETS[0];
+
 export async function generateRebalanceStrategy(
   prompt: string
 ): Promise<GeneratedRebalance> {

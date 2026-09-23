@@ -14,6 +14,8 @@ import {Link} from "@tanstack/react-router";
 import {ProvenanceBadge} from "@/components/provenance-badge.tsx";
 import {useLeaderboard} from "@/core/use-data.ts";
 import type {LeaderboardIndex} from "@/core/types.ts";
+import {isMyIndex} from "@/core/ownership.ts";
+import {useWallet} from "@/core/wallet-context.tsx";
 
 const EXP = "https://coston2-explorer.flare.network";
 // A real, tee-signed StableIndexVault.rebalance() on Coston2 (the mag-7-rwa
@@ -121,6 +123,7 @@ export function LeaderboardPage() {
 }
 
 function Row({idx}: {idx: LeaderboardIndex}) {
+  const {address} = useWallet();
   // Prefer the real NAV the engine writes (same as the Live board); fall back to
   // the position-derived value only for older data without a nav field.
   const nav =
@@ -135,7 +138,7 @@ function Row({idx}: {idx: LeaderboardIndex}) {
       <Table.Td>
         <Group gap={6}>
           <Text fw={600}>{idx.name}</Text>
-          {idx.owner === "you" && (
+          {isMyIndex(idx.id, address) && (
             <Badge size="xs" variant="light" color="flare">
               Yours
             </Badge>

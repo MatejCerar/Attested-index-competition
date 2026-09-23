@@ -38,6 +38,7 @@ import {
 import {ProvenanceBadge} from "@/components/provenance-badge.tsx";
 import {useLive} from "@/core/use-data.ts";
 import type {LiveData, LiveIndex} from "@/core/types.ts";
+import {isMyIndex} from "@/core/ownership.ts";
 
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`;
 const usd = (x?: number | null) =>
@@ -458,7 +459,7 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
       </Table.Tr>
     );
   }
-  const mine = b.owner === "you" || b.mine === true;
+  const mine = isMyIndex(b.id, invest.address);
   return (
     <Table.Tr style={mine ? {background: "var(--mantine-color-flare-light)"} : undefined}>
       <Table.Td>

@@ -1,4 +1,5 @@
 import type {UserBasket} from "@/core/types.ts";
+import {recordMyIndex} from "@/core/ownership.ts";
 
 // POST a built basket to the competition server's /api/add. The server
 // validates it against the RWA catalog, scores it with the real rebalance math,
@@ -7,7 +8,9 @@ import type {UserBasket} from "@/core/types.ts";
 // optional rebalanceSpec (prompt-generated rule) the server persists and the
 // live engine evaluates. Returns the ranked entry, or {ok:false} with an error
 // if the server is unreachable so the caller can fail loudly (the submission
-// never reached the competition).
+// never reached the competition). On success the index is remembered locally
+// as owned by ownerAddress (the connected wallet, or the "local" bucket when
+// none is connected) so the "Yours" badge follows the wallet.
 const API = import.meta.env.VITE_API_URL as string | undefined;
 
 export interface AddResult {
@@ -23,7 +26,10 @@ export interface AddResult {
   error?: string;
 }
 
-export async function addBasket(basket: UserBasket): Promise<AddResult> {
+export async function addBasket(
+  basket: UserBasket,
+  ownerAddress?: string | null
+): Promise<AddResult> {
   if (!API) return {ok: false, error: "no server configured"};
   try {
     const r = await fetch(`${API}/add`, {
@@ -36,6 +42,8 @@ export async function addBasket(basket: UserBasket): Promise<AddResult> {
       return {ok: false, error: j.error || `server ${r.status}`};
     }
     const j = await r.json();
+    // Remember this index as owned by the submitting wallet (local storage).
+    recordMyIndex(j.entry?.id ?? basket.id, ownerAddress);
     return {ok: true, mode: j.mode, entry: j.entry};
   } catch (e) {
     return {ok: false, error: String(e)};

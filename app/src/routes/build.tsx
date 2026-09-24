@@ -88,7 +88,6 @@ const specReadout = (s: RebalanceSpec) =>
 
 // Starter prompts for the "Generate from prompt" box (RWA universe).
 const PROMPT_TEMPLATES = [
-  "Bloomberg top 5 US tech stocks",
   "Magnificent 7 tokenized equities",
   "AI and semiconductor leaders",
   "Gold-heavy precious metals hedge",

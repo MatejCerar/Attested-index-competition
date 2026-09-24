@@ -12,9 +12,9 @@
 //
 // Prices (RWA-only): Yahoo (tokenized equities to the bare ticker, metals to
 // futures GC=F/SI=F/PL=F/PA=F). Any symbol with no live source (or a fetch
-// failure) evolves off its last good price with a small bounded random walk so
-// the board always moves. API calls are batched within a tick; a failed fetch
-// keeps the last good price. No CoinGecko/crypto dependency.
+// failure) HOLDS its last good price flat (src "held"); nothing synthetic ever
+// moves. API calls are batched within a tick; a failed fetch keeps the last
+// good price. No CoinGecko/crypto dependency.
 //
 // OFF-CHAIN (default, no PK): runs entirely on live prices, no chain.
 // ON-CHAIN (PK + TEE_SIGN_URL set): pushes each tick's live prices into the
@@ -23,7 +23,7 @@
 // indices, recording tx hashes in live.json. Same loop, one flag. On-chain
 // address maps come from scripts/compete-setup.mjs (compete-onchain.json).
 //
-// Config (env): TICK_MS=15000 CAPITAL=100000 WALK_BPS=25 (max per-tick walk)
+// Config (env): TICK_MS=15000 CAPITAL=100000
 import {readFileSync, writeFileSync, existsSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import {dirname, join} from "node:path";
@@ -55,7 +55,7 @@ const SAMPLE_VAULT = "0xef749278eba072799ef64d57b7126ee496262c56";
 
 const TICK_MS = num("TICK_MS", 15000);
 const CAPITAL = num("CAPITAL", 100000);
-const WALK_BPS = num("WALK_BPS", 25); // max bounded random walk per tick, bps
+const FEE_BPS = 200; // platform deposit fee, mirrored by scripts/server.mjs
 const MAX_POINTS = num("MAX_POINTS", 240); // NAV series cap per index
 const PK = process.env.PK;
 const ON_CHAIN = !!(PK && process.env.TEE_SIGN_URL);
@@ -107,7 +107,7 @@ const MATRIX_HASH = matrixHash();
 // large-cap tickers (NVDA, MSFT, ...) so every leg prices live on Yahoo. --
 
 // Resolve a matrix ticker to a priceable catalog asset (recognizable tokenized
-// issuers first) so legs reuse the existing pool syms and walk seeds.
+// issuers first) so legs reuse the existing pool syms and seed prices.
 const ISSUER_PREF = ["backed", "ondo", "robinhood"];
 function assetForTicker(t) {
     const hits = catalog.assets.filter((a) => a.priceUsd > 0 && bareTicker(a) === t);
@@ -128,7 +128,7 @@ function attestedEntry(ix) {
             sym: a?.ticker ?? t,
             symbol: a ? underlyingSymbol(a) : t,
             src: "yahoo",
-            walkSeed: a?.priceUsd ?? null,
+            seedPx: a?.priceUsd ?? null,
             weight: built.weightsBps[i] / 100,
             matrixId: t,
             sector: sectorByTicker[t] || "other",
@@ -152,8 +152,8 @@ function attestedEntry(ix) {
 }
 
 // Resolve each leg's live price symbol + source. RWA -> Yahoo via
-// underlyingSymbol. Anything unmapped falls to the random walk. Submissions are
-// RWA-only too; a stray crypto-tagged basket is priced off its walk seed.
+// underlyingSymbol. Anything unmapped holds its seed price flat. Submissions
+// are RWA-only too; a stray crypto-tagged basket holds its seed price.
 function buildLegs(b) {
     return Object.entries(b.weights).map(([id, weight]) => {
         const a = byId.get(id);
@@ -163,7 +163,7 @@ function buildLegs(b) {
             sym: a.ticker,
             symbol: underlyingSymbol(a),
             src: "yahoo",
-            walkSeed: a.priceUsd ?? 1, // seed for the walk fallback
+            seedPx: a.priceUsd ?? 1, // held flat until a live price arrives
             weight,
             matrixId: bareTicker(a), // frozen-matrix key (feature conditions)
             sector: sectorByTicker[bareTicker(a)] || "other",
@@ -176,14 +176,14 @@ const field = ATTESTED_INDICES.map(attestedEntry);
 // grow this set at runtime as they join, so their legs get fetched.
 const ySyms = new Set();
 
-// Last good price per symbol; the walk evolves off this when live is missing.
+// Last good price per symbol; held flat when live is missing.
 const lastGood = {};
 
 // Register an index's legs into the fetch set + seed lastGood (idempotent).
 function registerLegs(b) {
     for (const l of b.legs) {
         ySyms.add(l.symbol);
-        if (l.walkSeed && lastGood[l.symbol] == null) lastGood[l.symbol] = l.walkSeed;
+        if (l.seedPx && lastGood[l.symbol] == null) lastGood[l.symbol] = l.seedPx;
     }
 }
 for (const b of field) registerLegs(b);
@@ -206,7 +206,7 @@ function baselineIndex(b, px) {
     b.peakNav = 0; // running NAV peak for drawdown; updated in stepIndex
     const tgt = targetWeightsBps(b);
     for (const l of b.legs) {
-        const p = px[l.symbol] > 0 ? px[l.symbol] : (l.walkSeed ?? 1);
+        const p = px[l.symbol] > 0 ? px[l.symbol] : (l.seedPx ?? 1);
         b.p0[l.symbol] = p;
         const wBps = tgt[l.sym] ?? 0;
         b.units[l.symbol] = (CAPITAL * wBps) / 10000 / p;
@@ -282,7 +282,7 @@ async function pickupSubmissions(px, now) {
             try {
                 y = await fetchYahoo([...need]);
             } catch {
-                /* fall back to last good / walk seed below */
+                /* fall back to last good / seed price below */
             }
             for (const s of need) {
                 if (y[s] > 0) {
@@ -298,18 +298,12 @@ async function pickupSubmissions(px, now) {
     return added;
 }
 
-// Bounded random walk: nudge a price by up to +/- WALK_BPS, floored positive.
-function walk(prev) {
-    const d = ((Math.random() * 2 - 1) * WALK_BPS) / 10000;
-    return Math.max(prev * (1 + d), prev * 0.5);
-}
-
 // One tick of prices, tiered 24/7: token venue price first (Jupiter/CoinGecko,
-// band-checked against the Yahoo reference), Yahoo for the rest, random-walk
-// fill for any symbol with no source at all. tickSrc/tickPremium record per
-// symbol which tier priced it this tick, for live.json + logs.
+// band-checked against the Yahoo reference), Yahoo for the rest. A symbol with
+// no live source HOLDS its last good price flat ("held"); no synthetic
+// movement. tickSrc/tickPremium record per symbol which tier priced it this
+// tick, for live.json + logs.
 const PRICE_BAND = num("PRICE_BAND", 0.25);
-let usedWalk = false;
 let tickSrc = {};
 let tickPremium = {};
 async function fetchTick() {
@@ -320,7 +314,6 @@ async function fetchTick() {
         /* keep last good */
     }
     const px = {};
-    usedWalk = false;
     tickSrc = {};
     tickPremium = {};
     const wants = new Set([...ySyms]);
@@ -332,18 +325,16 @@ async function fetchTick() {
             tickSrc[s] = c.source;
             tickPremium[s] = c.premium;
         } else if (lastGood[s] > 0) {
-            px[s] = walk(lastGood[s]); // evolve off last good so it moves
-            lastGood[s] = px[s];
-            tickSrc[s] = "walk";
-            usedWalk = true;
+            px[s] = lastGood[s]; // no live source: hold flat
+            tickSrc[s] = "held";
         }
     }
     return px;
 }
 
-// Per-tick source tally for logging: "34 token / 12 yahoo / 3 walk".
+// Per-tick source tally for logging: "34 token / 12 yahoo / 3 held".
 function priceSourceTally() {
-    const n = {token: 0, yahoo: 0, walk: 0};
+    const n = {token: 0, yahoo: 0, held: 0};
     for (const s of Object.values(tickSrc)) n[s] = (n[s] ?? 0) + 1;
     return n;
 }
@@ -533,6 +524,9 @@ async function initChain() {
         "function navUsdE18() view returns (uint256)",
         "function totalSupply() view returns (uint256)",
         "function totalDeposited() view returns (uint256)",
+        "function getHoldings() view returns (uint256[])",
+        "function getPools() view returns (address[])",
+        "function cash() view returns (uint256)",
     ];
     async function teeSign(messageHex, retries = 20) {
         const b64 = Buffer.from(getBytes(messageHex)).toString("base64");
@@ -679,6 +673,13 @@ async function rebalanceOnChain(b, px) {
 // both live prices AND user deposits. Return is share-based (navUsdE18 /
 // totalSupply), which starts at 1.0 and is deposit-neutral, so deposits grow TVL
 // without faking performance. Vaults with no shares yet fall back to the sim.
+// Also reads the per-leg on-chain values (getHoldings x pool priceUsdE18) so the
+// legs shown for an on-chain row come from the SAME source as its NAV:
+// b.chainLegs = [{sym, valueUsd, weightBps, priceUsd, chg}] in vault asset
+// order, plus b.chainCash (idle stable, USD). chainCash + sum(valueUsd) must
+// equal chainNav (the vault computes NAV from exactly these terms); a mismatch
+// beyond rounding is logged.
+const POOL_PRICE_ABI = ["function priceUsdE18() view returns (uint256)"];
 async function readChainNav() {
     if (!ON_CHAIN || !chain) return;
     const {cfg, gov, Contract, vaultAbi} = chain;
@@ -692,21 +693,54 @@ async function readChainNav() {
                 vault.totalSupply(),
                 vault.totalDeposited(),
             ]);
-            if (shares > 0n) {
-                b.chainNav = Number(navE18 / 10n ** 16n) / 100; // USD, 2dp
-                b.chainRet = Number((navE18 * 1000000n) / shares) / 1e6 - 1;
-                b.chainTvl = Number(deposited) / 1e6; // gross deposited, USD
-            } else {
-                // Vault exists but nobody has deposited yet: show the real (zero)
-                // on-chain value, never the $100k simulation.
-                b.chainNav = Number(navE18 / 10n ** 16n) / 100;
-                b.chainRet = 0;
-                b.chainTvl = Number(deposited) / 1e6;
-            }
+            b.chainNav = Number(navE18 / 10n ** 16n) / 100; // USD, 2dp
+            // No shares yet: real (zero) on-chain value, never the $100k sim.
+            b.chainRet = shares > 0n ? Number((navE18 * 1000000n) / shares) / 1e6 - 1 : 0;
+            b.chainTvl = Number(deposited) / 1e6; // gross deposited, USD
+            await readChainLegs(b, vault, v, Contract, gov);
         } catch (e) {
             console.error(`navUsdE18 ${b.id} read failed:`, e.message);
         }
     }));
+}
+
+// Per-leg on-chain breakdown for one vault. Separate try so an older vault
+// without getPools() still gets its NAV read above. chg is pool price now vs
+// the pool price when this leg was first seen (b.chainP0).
+async function readChainLegs(b, vault, v, Contract, gov) {
+    try {
+        const [holdings, poolAddrs, cash] = await Promise.all([
+            vault.getHoldings(),
+            vault.getPools(),
+            vault.cash(),
+        ]);
+        const prices = await Promise.all(
+            poolAddrs.map((a) => new Contract(a, POOL_PRICE_ABI, gov).priceUsdE18())
+        );
+        b.chainCash = Number(cash) / 1e6; // stable is 6dp mUSDC
+        b.chainP0 = b.chainP0 ?? {};
+        b.chainLegs = [...holdings].map((h, i) => {
+            const sym = v.order[i] ?? `#${i}`;
+            const priceUsd = Number(prices[i]) / 1e18;
+            const valueUsd = Number((h * prices[i]) / 10n ** 18n) / 1e18;
+            if (!(b.chainP0[sym] > 0) && priceUsd > 0) b.chainP0[sym] = priceUsd;
+            return {
+                sym,
+                valueUsd,
+                weightBps: b.chainNav > 0 ? Math.round((valueUsd / b.chainNav) * 10000) : 0,
+                priceUsd,
+                chg: b.chainP0[sym] > 0 ? priceUsd / b.chainP0[sym] - 1 : null,
+            };
+        });
+        const legSum = b.chainCash + b.chainLegs.reduce((a, l) => a + l.valueUsd, 0);
+        if (Math.abs(legSum - b.chainNav) > Math.max(0.02, b.chainNav * 1e-4))
+            console.error(
+                `chainLegs ${b.id} do not reconcile: cash+legs=$${legSum.toFixed(2)} nav=$${b.chainNav.toFixed(2)}`
+            );
+    } catch (e) {
+        b.chainLegs = null;
+        console.error(`chainLegs ${b.id} read failed:`, e.message);
+    }
 }
 
 // Provenance block per index (Phase 6 badges). Attested indices carry the
@@ -729,10 +763,10 @@ function provenanceOf(b) {
     return p;
 }
 
-// Per-index price-source summary: legs priced off token vs yahoo vs walk this
+// Per-index price-source summary: legs priced off token vs yahoo vs held this
 // tick, plus the largest observed token premium/discount among its legs.
 function priceSourceOf(b) {
-    const n = {token: 0, yahoo: 0, walk: 0};
+    const n = {token: 0, yahoo: 0, held: 0};
     let top = null;
     for (const l of b.legs) {
         const s = tickSrc[l.symbol];
@@ -742,6 +776,49 @@ function priceSourceOf(b) {
             top = {sym: l.sym, premium: p};
     }
     return {...n, maxPremium: top};
+}
+
+// Per-leg rows for live.json. On-chain rows emit the ON-CHAIN legs (weight and
+// value from getHoldings x pool price, chg vs first-seen pool price) plus a
+// CASH row when idle stable remains, so the legs shown reconcile with the
+// on-chain NAV. Sim rows keep the sim feed (px/p0), which already reconciles.
+function legsOf(b, px) {
+    if (b.chainLegs) {
+        const legs = b.chainLegs.map((l) => ({
+            sym: l.sym,
+            weight: l.weightBps / 100,
+            dead: false,
+            price: l.priceUsd,
+            valueUsd: l.valueUsd,
+            src: "onchain",
+            premium: null,
+            chg: l.chg,
+            onchain: true,
+        }));
+        if (b.chainCash > 0.005)
+            legs.push({
+                sym: "CASH",
+                weight: b.chainNav > 0 ? Math.round((b.chainCash / b.chainNav) * 10000) / 100 : 0,
+                dead: false,
+                price: 1,
+                valueUsd: b.chainCash,
+                src: "onchain",
+                premium: null,
+                chg: 0,
+                onchain: true,
+            });
+        return legs;
+    }
+    return b.legs.map((l) => ({
+        sym: l.sym,
+        symbol: l.symbol,
+        weight: l.weight,
+        dead: !(px[l.symbol] > 0),
+        price: px[l.symbol] ?? null,
+        src: tickSrc[l.symbol] ?? null,
+        premium: tickPremium[l.symbol] ?? null,
+        chg: px[l.symbol] > 0 && b.p0[l.symbol] > 0 ? px[l.symbol] / b.p0[l.symbol] - 1 : null,
+    }));
 }
 
 // -- Snapshots. Writes live.json (per-index NAV series + rank + reason) and a
@@ -770,6 +847,8 @@ function snapshot(px) {
                 nav,
                 ret,
                 tvl: b.chainTvl ?? null, // real deposited stablecoin, USD (on-chain)
+                depositedUsd: b.chainTvl ?? null, // gross deposits incl. fee
+                cashUsd: b.chainCash ?? null, // idle stable in the vault, USD
                 rebalances: b.rebalances,
                 lastReason: b.lastReason ?? "none yet",
                 lastRebalanceAt: b.lastRebalanceAt,
@@ -783,16 +862,7 @@ function snapshot(px) {
                 txSample: b.txSample === true,
                 series: b.series.map((p) => ({t: p.t, nav: p.nav, ret: p.ret})),
                 priceSource: priceSourceOf(b),
-                legs: b.legs.map((l) => ({
-                    sym: l.sym,
-                    symbol: l.symbol,
-                    weight: l.weight,
-                    dead: !(px[l.symbol] > 0),
-                    price: px[l.symbol] ?? null,
-                    src: tickSrc[l.symbol] ?? null,
-                    premium: tickPremium[l.symbol] ?? null,
-                    chg: px[l.symbol] > 0 && b.p0[l.symbol] > 0 ? px[l.symbol] / b.p0[l.symbol] - 1 : null,
-                })),
+                legs: legsOf(b, px),
             };
         })
         .sort((a, b) => b.ret - a.ret);
@@ -805,14 +875,13 @@ function snapshot(px) {
         intervalSec: Math.round(TICK_MS / 1000),
         rebalanceSec: 0, // per-index strategy timing
         capital: CAPITAL,
+        feeBps: FEE_BPS,
         finished: false,
         continuous: true,
         source: ON_CHAIN ? "onchain" : "live",
         sourceLabel: ON_CHAIN
             ? "Live prices pushed on-chain (MockUniswapV3Pool slot0), FCC-signed rebalance"
-            : (usedWalk
-                ? "Tiered 24/7: token venue + Yahoo reference, random-walk fallback for gaps"
-                : "Tiered 24/7: token venue (Jupiter/CoinGecko) + Yahoo reference"),
+            : "Tiered 24/7: token venue (Jupiter/CoinGecko) + Yahoo reference; gaps hold last good price",
         priceSources: priceSourceTally(),
         indices: scored,
     };
@@ -855,7 +924,7 @@ function writeLeaderboard(scored, px) {
     const data = {
         generatedAt: new Date().toISOString(),
         network: ON_CHAIN ? "Coston2 (chain 114)" : "off-chain live competition",
-        feeBps: 200,
+        feeBps: FEE_BPS,
         platformRevenueUsd: 0,
         live: true,
         attestedBy: ON_CHAIN
@@ -901,7 +970,7 @@ async function main() {
     await readChainNav();
     snapshot(px);
     const n0 = priceSourceTally();
-    console.log(`t0 price sources: ${n0.token} token / ${n0.yahoo} yahoo / ${n0.walk} walk (band ${PRICE_BAND})`);
+    console.log(`t0 price sources: ${n0.token} token / ${n0.yahoo} yahoo / ${n0.held} held (band ${PRICE_BAND})`);
 
     while (!stopping) {
         await sleep(TICK_MS);
@@ -942,7 +1011,7 @@ async function main() {
         const scored = snapshot(tickPx);
         const lead = scored.slice(0, 3).map((r) => `${r.rank}.${r.name} ${pctS(r.ret)}`).join("   ");
         const n = priceSourceTally();
-        console.log(`[${new Date().toISOString().slice(11, 19)}] ${lead}   px: ${n.token} token / ${n.yahoo} yahoo / ${n.walk} walk`);
+        console.log(`[${new Date().toISOString().slice(11, 19)}] ${lead}   px: ${n.token} token / ${n.yahoo} yahoo / ${n.held} held`);
         } catch (e) {
             console.error(`tick failed, continuing next tick:`, e?.message ?? e);
         }

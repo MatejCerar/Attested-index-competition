@@ -97,6 +97,9 @@ export interface LiveLeg {
   dead: boolean;
   price: number | null;
   chg: number | null;
+  src?: string | null; // token | yahoo | held | onchain
+  valueUsd?: number | null; // on-chain leg value (holdings x pool price)
+  onchain?: boolean; // leg read from the vault; reconciles with its NAV
 }
 
 export interface NavPoint {
@@ -116,6 +119,8 @@ export interface LiveIndex extends IndexProvenance {
   nav?: number;
   ret?: number;
   tvl?: number | null; // real deposited stablecoin in the vault, USD (on-chain)
+  depositedUsd?: number | null; // gross deposits incl. platform fee
+  cashUsd?: number | null; // idle stable in the vault, USD
   rank?: number;
   strategy?: string;
   strategyName?: string;
@@ -137,6 +142,7 @@ export interface LiveData {
   intervalSec: number;
   rebalanceSec: number;
   capital: number;
+  feeBps?: number;
   finished: boolean;
   continuous?: boolean;
   source: string;

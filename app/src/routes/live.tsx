@@ -214,7 +214,13 @@ export function LivePage() {
           </Table.Thead>
           <Table.Tbody>
             {data.indices.map((b) => (
-              <LiveRow key={b.id} b={b} source={data.source} invest={invest} />
+              <LiveRow
+                key={b.id}
+                b={b}
+                source={data.source}
+                invest={invest}
+                feeBps={data.feeBps}
+              />
             ))}
           </Table.Tbody>
         </Table>
@@ -432,7 +438,17 @@ function VaultActions({vault, invest}: {vault: string; invest: InvestCtx}) {
   );
 }
 
-function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: InvestCtx}) {
+function LiveRow({
+  b,
+  source,
+  invest,
+  feeBps,
+}: {
+  b: LiveIndex;
+  source: string;
+  invest: InvestCtx;
+  feeBps?: number;
+}) {
   // Track rank movement between refreshes for an up/down arrow.
   const prevRank = useRef<number | undefined>(b.rank);
   const vaultAddr = invest.vaults[b.id]?.addr ?? null;
@@ -522,22 +538,45 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
       </Table.Td>
       <Table.Td>
         <Group gap={4}>
-          {b.legs.map((l) => (
-            <Badge
-              key={l.sym}
-              variant="light"
-              color="gray"
-              style={l.dead ? {textDecoration: "line-through", opacity: 0.4} : undefined}
-            >
-              {l.sym} {l.weight}%
-              {!l.dead && l.chg != null && (
-                <Text component="span" c={l.chg >= 0 ? "up.7" : "down.7"} ml={4}>
-                  {pct(l.chg)}
-                </Text>
-              )}
-            </Badge>
-          ))}
+          {b.legs.map((l) =>
+            l.onchain ? (
+              // On-chain leg: weight and value read from the vault itself
+              // (holdings x pool price), so the legs sum to the NAV column.
+              <Badge key={l.sym} variant="light" color="gray">
+                {l.sym} {l.weight.toFixed(1)}%
+                {l.valueUsd != null && (
+                  <Text component="span" c="dimmed" ml={4}>
+                    {usd(l.valueUsd)}
+                  </Text>
+                )}
+                {l.chg != null && (
+                  <Text component="span" c={l.chg >= 0 ? "up.7" : "down.7"} ml={4}>
+                    {pct(l.chg)}
+                  </Text>
+                )}
+              </Badge>
+            ) : (
+              <Badge
+                key={l.sym}
+                variant="light"
+                color="gray"
+                style={l.dead ? {textDecoration: "line-through", opacity: 0.4} : undefined}
+              >
+                {l.sym} {l.weight}%
+                {!l.dead && l.chg != null && (
+                  <Text component="span" c={l.chg >= 0 ? "up.7" : "down.7"} ml={4}>
+                    {pct(l.chg)}
+                  </Text>
+                )}
+              </Badge>
+            )
+          )}
         </Group>
+        {b.legs.some((l) => l.onchain) && (
+          <Text size="note" c="dimmed" mt={4}>
+            leg values read from the vault; they sum to the on-chain NAV
+          </Text>
+        )}
       </Table.Td>
       <Table.Td>
         <Text size="note" c="dimmed" maw={220}>
@@ -548,7 +587,8 @@ function LiveRow({b, source, invest}: {b: LiveIndex; source: string; invest: Inv
         {b.nav != null ? usd(b.nav) : "-"}
         {b.tvl != null && (
           <Text size="note" c="dimmed">
-            TVL {usd(b.tvl)} on-chain
+            on {usd(b.tvl)} deposited
+            {feeBps ? ` (incl. ${feeBps / 100}% fee)` : ""}
           </Text>
         )}
       </Table.Td>

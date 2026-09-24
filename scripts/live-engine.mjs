@@ -39,7 +39,7 @@ import {
 import {weightsToBps} from "../index/weights.mjs";
 import {ATTESTED_INDICES} from "../index/attested-indices.mjs";
 import {buildFromConfig, loadMatrixCsv, matrixHash, parseCsv} from "../index/build-index.mjs";
-import {createOracle} from "./oracle.mjs";
+import {createOracle, getComparedPrices} from "./oracle.mjs";
 import {teeSignEnvelope} from "../enclave/teesign.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -304,31 +304,48 @@ function walk(prev) {
     return Math.max(prev * (1 + d), prev * 0.5);
 }
 
-// One tick of prices: batched Yahoo, then random-walk fill for any symbol still
-// missing (keeps the board alive off-hours / on fetch failure).
+// One tick of prices, tiered 24/7: token venue price first (Jupiter/CoinGecko,
+// band-checked against the Yahoo reference), Yahoo for the rest, random-walk
+// fill for any symbol with no source at all. tickSrc/tickPremium record per
+// symbol which tier priced it this tick, for live.json + logs.
+const PRICE_BAND = num("PRICE_BAND", 0.25);
 let usedWalk = false;
+let tickSrc = {};
+let tickPremium = {};
 async function fetchTick() {
-    let y = {};
+    let cmp = {};
     try {
-        y = ySyms.size ? await oracle.getPrices([...ySyms]) : {};
+        cmp = ySyms.size ? await getComparedPrices([...ySyms], {band: PRICE_BAND}) : {};
     } catch {
         /* keep last good */
     }
     const px = {};
     usedWalk = false;
+    tickSrc = {};
+    tickPremium = {};
     const wants = new Set([...ySyms]);
     for (const s of wants) {
-        const live = y[s];
-        if (live > 0) {
-            px[s] = live;
-            lastGood[s] = live;
+        const c = cmp[s];
+        if (c?.price > 0) {
+            px[s] = c.price;
+            lastGood[s] = c.price;
+            tickSrc[s] = c.source;
+            tickPremium[s] = c.premium;
         } else if (lastGood[s] > 0) {
             px[s] = walk(lastGood[s]); // evolve off last good so it moves
             lastGood[s] = px[s];
+            tickSrc[s] = "walk";
             usedWalk = true;
         }
     }
     return px;
+}
+
+// Per-tick source tally for logging: "34 token / 12 yahoo / 3 walk".
+function priceSourceTally() {
+    const n = {token: 0, yahoo: 0, walk: 0};
+    for (const s of Object.values(tickSrc)) n[s] = (n[s] ?? 0) + 1;
+    return n;
 }
 
 // Current portfolio weights (bps) from holdings * price.
@@ -712,6 +729,21 @@ function provenanceOf(b) {
     return p;
 }
 
+// Per-index price-source summary: legs priced off token vs yahoo vs walk this
+// tick, plus the largest observed token premium/discount among its legs.
+function priceSourceOf(b) {
+    const n = {token: 0, yahoo: 0, walk: 0};
+    let top = null;
+    for (const l of b.legs) {
+        const s = tickSrc[l.symbol];
+        if (s) n[s]++;
+        const p = tickPremium[l.symbol];
+        if (p != null && (top == null || Math.abs(p) > Math.abs(top.premium)))
+            top = {sym: l.sym, premium: p};
+    }
+    return {...n, maxPremium: top};
+}
+
 // -- Snapshots. Writes live.json (per-index NAV series + rank + reason) and a
 // return-ranked leaderboard.json each tick. --
 const t0 = Date.now();
@@ -750,12 +782,15 @@ function snapshot(px) {
                 rebalanceTx: b.rebalanceTx ?? null,
                 txSample: b.txSample === true,
                 series: b.series.map((p) => ({t: p.t, nav: p.nav, ret: p.ret})),
+                priceSource: priceSourceOf(b),
                 legs: b.legs.map((l) => ({
                     sym: l.sym,
                     symbol: l.symbol,
                     weight: l.weight,
                     dead: !(px[l.symbol] > 0),
                     price: px[l.symbol] ?? null,
+                    src: tickSrc[l.symbol] ?? null,
+                    premium: tickPremium[l.symbol] ?? null,
                     chg: px[l.symbol] > 0 && b.p0[l.symbol] > 0 ? px[l.symbol] / b.p0[l.symbol] - 1 : null,
                 })),
             };
@@ -775,7 +810,10 @@ function snapshot(px) {
         source: ON_CHAIN ? "onchain" : "live",
         sourceLabel: ON_CHAIN
             ? "Live prices pushed on-chain (MockUniswapV3Pool slot0), FCC-signed rebalance"
-            : (usedWalk ? "Live Yahoo (RWA), random-walk fallback for gaps" : "Live Yahoo (RWA)"),
+            : (usedWalk
+                ? "Tiered 24/7: token venue + Yahoo reference, random-walk fallback for gaps"
+                : "Tiered 24/7: token venue (Jupiter/CoinGecko) + Yahoo reference"),
+        priceSources: priceSourceTally(),
         indices: scored,
     };
     writeFileSync(join(dataDir, "live.json"), JSON.stringify(live, null, 2) + "\n");
@@ -862,6 +900,8 @@ async function main() {
     console.log(`t0 baseline set. sample live price ${sampleSym}=${px[sampleSym]?.toFixed?.(4) ?? px[sampleSym]}`);
     await readChainNav();
     snapshot(px);
+    const n0 = priceSourceTally();
+    console.log(`t0 price sources: ${n0.token} token / ${n0.yahoo} yahoo / ${n0.walk} walk (band ${PRICE_BAND})`);
 
     while (!stopping) {
         await sleep(TICK_MS);
@@ -901,7 +941,8 @@ async function main() {
         await readChainNav();
         const scored = snapshot(tickPx);
         const lead = scored.slice(0, 3).map((r) => `${r.rank}.${r.name} ${pctS(r.ret)}`).join("   ");
-        console.log(`[${new Date().toISOString().slice(11, 19)}] ${lead}`);
+        const n = priceSourceTally();
+        console.log(`[${new Date().toISOString().slice(11, 19)}] ${lead}   px: ${n.token} token / ${n.yahoo} yahoo / ${n.walk} walk`);
         } catch (e) {
             console.error(`tick failed, continuing next tick:`, e?.message ?? e);
         }

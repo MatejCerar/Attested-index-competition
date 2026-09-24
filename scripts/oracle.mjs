@@ -7,6 +7,7 @@
 // Symbols are underlying market symbols (AAPL, GC=F), never token tickers.
 import {AbiCoder, ZeroHash, encodeBytes32String, getBytes, keccak256, verifyMessage} from "ethers";
 import {fetchYahoo} from "./prices.mjs";
+import {getTokenPrices} from "./token-prices.mjs";
 import {teeSign} from "../enclave/teesign.mjs";
 
 const abi = AbiCoder.defaultAbiCoder();
@@ -49,6 +50,43 @@ export function stepAnomaly(ratios, maxStepMoveBps = 2500) {
         if (Math.abs(ratio - 1) > lim) return {sym, ratio};
     }
     return null;
+}
+
+// Tiered 24/7 pricing with compare. PRIMARY = the tokenized asset's real
+// venue price (Jupiter/CoinGecko, trades nights + weekends). FALLBACK = the
+// Yahoo underlying reference. When both exist, premium = token/ref - 1; the
+// token price wins while fresh and inside the band (a generous band: normal
+// off-hours premium passes, stale or garbage prints are rejected to the ref).
+// Returns {SYM: {price, source: "token"|"yahoo", ref, premium}}. Never throws.
+export async function getComparedPrices(symbols, {
+    band = 0.25,
+    maxAgeMs = 15 * 60_000,
+    fetchRef = fetchYahoo,
+    fetchTok = getTokenPrices,
+} = {}) {
+    const uniq = [...new Set(symbols)];
+    const [tok, ref] = await Promise.all([
+        Promise.resolve().then(() => fetchTok(uniq)).catch(() => ({})),
+        Promise.resolve().then(() => fetchRef(uniq)).catch(() => ({})),
+    ]);
+    const now = Date.now();
+    const out = {};
+    for (const s of uniq) {
+        const t = tok[s];
+        const r = ref[s] > 0 ? ref[s] : null;
+        const fresh = t?.price > 0 && now - t.ts <= maxAgeMs;
+        if (fresh && r) {
+            const premium = t.price / r - 1;
+            out[s] = Math.abs(premium) <= band
+                ? {price: t.price, source: "token", ref: r, premium}
+                : {price: r, source: "yahoo", ref: r, premium};
+        } else if (fresh) {
+            out[s] = {price: t.price, source: "token", ref: null, premium: null};
+        } else if (r) {
+            out[s] = {price: r, source: "yahoo", ref: r, premium: null};
+        }
+    }
+    return out;
 }
 
 // Working Web2Json request builder against the Yahoo chart endpoint. jq scales
